@@ -119,15 +119,20 @@ void display_status() {
         g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
         g_display.fillScreen(GxEPD_WHITE);
-        g_display.setFont(&FreeSansBold12pt7b);
         g_display.setTextColor(GxEPD_BLACK);
-        g_display.setCursor(5, 30);
+        
+        g_display.setFont(&FreeSansBold12pt7b);
+        g_display.setCursor(2, 30);
+        g_display.println("BIP39 Generator");
+        g_display.setCursor(2, 60);
         g_display.println("Enter Dice Rolls");
+        
         g_display.setFont(&FreeMonoBold12pt7b);
-        g_display.setCursor(10, 80);
+        g_display.setCursor(10, 95);
         g_display.printf("Rolls: %d\n", g_rolls.length());
-        g_display.setCursor(10, 108);
+        g_display.setCursor(10, 123);
         g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
+        
         g_display.setFont(&FreeSansBold9pt7b);
         g_display.setCursor(0, 160);
         g_display.println("   Press * to clear");
