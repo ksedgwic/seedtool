@@ -39,6 +39,9 @@ void setup() {
     pinMode(25, OUTPUT);	// Blue LED
     digitalWrite(25, HIGH);
     
+    pinMode(26, OUTPUT);	// Green LED
+    digitalWrite(26, LOW);
+    
     g_display.init(115200);
 
     Serial.begin(115200);
@@ -48,8 +51,14 @@ void setup() {
 }
 
 void loop() {
-    display_status();
+    if (g_rolls.length() * 2.5850 >= 128.0) {
+        digitalWrite(26, HIGH);
+    } else {
+        digitalWrite(26, LOW);
+    }
     
+    display_status();
+        
     if (!g_submitted) {
         char key;
         do {
