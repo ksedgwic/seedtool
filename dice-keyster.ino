@@ -11,6 +11,8 @@
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 
+#include <slip39.h>
+
 // Display
 GxEPD2_BW<GxEPD2_154, GxEPD2_154::HEIGHT>
     g_display(GxEPD2_154(/*CS=*/   21,
@@ -88,6 +90,8 @@ void loop() {
         Serial.printf("g_rolls: %s\n", g_rolls.c_str());
     } else {
         display_wordlist();
+
+        slip39_wordlist();
         
         // Wait for a keypress
         char key;
@@ -105,16 +109,17 @@ void reset_state() {
     g_submitted = false;
 }
 
+uint8_t g_master_secret[16];
+
 void generate_key() {
     Sha256Class sha256;
     sha256.init();
     for(uint8_t ii=0; ii < g_rolls.length(); ii++) {
         sha256.write(g_rolls[ii]);
     }
-    uint8_t payload[16];
-    memcpy(payload, sha256.result(), sizeof(payload));
-    g_bip39.setPayloadBytes(sizeof(payload));
-    g_bip39.setPayload(sizeof(payload), (uint8_t *)payload);
+    memcpy(g_master_secret, sha256.result(), sizeof(g_master_secret));
+    g_bip39.setPayloadBytes(sizeof(g_master_secret));
+    g_bip39.setPayload(sizeof(g_master_secret), (uint8_t *)g_master_secret);
     for (int ndx = 0; ndx < 12; ++ndx) {
         uint16_t word = g_bip39.getWord(ndx);
         Serial.printf("%d %s\n", ndx, g_bip39.getMnemonic(word));
@@ -171,4 +176,53 @@ void display_wordlist() {
         g_display.println("Press * to clear");
     }
     while (g_display.nextPage());
+}
+
+void slip39_wordlist() {
+    int gt = 3;
+    int gn = 5;
+    
+    char *ml[gn];
+    
+    for (int ii = 0; ii < gn; ++ii)
+        ml[ii] = (char *)malloc(MNEMONIC_LIST_LEN);
+
+    Serial.printf("calling generate_mnemonics\n");
+    generate_mnemonics(gt, gn,
+                       g_master_secret, sizeof(g_master_secret),
+                       NULL, 0, 0, ml);
+
+    for (int ii = 0; ii < gn; ++ii)
+        Serial.printf("%d: %s\n", ii, ml[ii]);
+
+    // Combine 2, 0, 4 to recover the secret.
+    char *dml[5];
+    dml[0] = ml[2];
+    dml[1] = ml[0];
+    dml[2] = ml[4];
+    
+    uint8_t ms[16];
+    int msl;
+    msl = sizeof(ms);
+    combine_mnemonics(gt, dml, NULL, 0, ms, &msl);
+
+    if (msl == sizeof(g_master_secret) &&
+        memcmp(g_master_secret, ms, msl) == 0) {
+        Serial.printf("SUCCESS\n");
+    } else {
+        Serial.printf("FAIL\n");
+    }
+}
+
+extern "C" {
+void random_buffer(uint8_t *buf, size_t len) {
+    Serial.printf("random_buffer %d\n", len);
+    uint32_t r = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (i % 4 == 0) {
+            r = esp_random();
+        }
+        buf[i] = (r >> ((i % 4) * 8)) & 0xFF;
+    }
+}
 }
