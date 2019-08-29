@@ -1,21 +1,31 @@
 // Copyright 2019 Bonsai Software, Inc.  All Rights Reserved.
 
 #include <bip39.h>
-// #include <Keypad.h>
+#include <GxEPD2_BW.h>
+#include <Keypad.h>
 
-#if 0
 #include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
-#endif
 
 #include <slip39.h>
 
+#define ESP32 1
+
+#if defined(SAMD51)
 extern "C" {
   #include "trngFunctions.h"
 }
+#endif
+
+// Display
+GxEPD2_BW<GxEPD2_154, GxEPD2_154::HEIGHT>
+    g_display(GxEPD2_154(/*CS=*/   21,
+                         /*DC=*/   17,
+                         /*RST=*/  16,
+                         /*BUSY=*/ 4));
 
 // Keypad
 const byte rows_ = 4;
@@ -28,32 +38,35 @@ char keys_[rows_][cols_] = {
 };
 byte rowPins_[rows_] = {13, 12, 27, 33};
 byte colPins_[cols_] = {15, 32, 14, 22};
-// Keypad g_keypad = Keypad(makeKeymap(keys_), rowPins_, colPins_, rows_, cols_);
+Keypad g_keypad = Keypad(makeKeymap(keys_), rowPins_, colPins_, rows_, cols_);
 
 String g_rolls;
 bool g_submitted;
 Bip39 g_bip39;
 
 void setup() {
-    // pinMode(25, OUTPUT);	// Blue LED
-    // digitalWrite(25, HIGH);
+    pinMode(25, OUTPUT);	// Blue LED
+    digitalWrite(25, HIGH);
     
-    // pinMode(26, OUTPUT);	// Green LED
-    // digitalWrite(26, LOW);
+    pinMode(26, OUTPUT);	// Green LED
+    digitalWrite(26, LOW);
     
-    // g_display.init(115200);
+    g_display.init(115200);
 
     Serial.begin(115200);
     while (!Serial);	// wait for serial to come online
 
     Serial.println("dice-keyster starting");
-    
+
+#if defined(SAMD51)
     trngInit();
+#endif
 
     reset_state();
 }
 
 void loop() {
+#if 0
     Serial.println("HELLO");
     delay(1000);
 
@@ -70,12 +83,12 @@ void loop() {
     }
     
     slip39_wordlist();
+#endif
     
-#if 0
     if (g_rolls.length() * 2.5850 >= 128.0) {
-        // digitalWrite(26, HIGH);
+        digitalWrite(26, HIGH);
     } else {
-        // digitalWrite(26, LOW);
+        digitalWrite(26, LOW);
     }
     
     display_status();
@@ -83,9 +96,9 @@ void loop() {
     if (!g_submitted) {
         char key;
         do {
-            // key = g_keypad.getKey();
+            key = g_keypad.getKey();
         } while (key == NO_KEY);
-        printf("keypad saw %c\n", key);
+        Serial.println("keypad saw " + String(key));
 
         switch (key) {
         case NO_KEY:
@@ -106,7 +119,7 @@ void loop() {
         default:
             break;
         }
-        printf("g_rolls: %s\n", g_rolls.c_str());
+        Serial.println("g_rolls: " + g_rolls);
     } else {
         display_wordlist();
 
@@ -115,13 +128,12 @@ void loop() {
         // Wait for a keypress
         char key;
         do {
-            // key = g_keypad.getKey();
+            key = g_keypad.getKey();
         } while (key == NO_KEY);
-        printf("keypad saw %c\n", key);
+        Serial.println("keypad saw " + String(key));
 
         reset_state();
     }
-#endif
 }
 
 void reset_state() {
@@ -147,7 +159,6 @@ void generate_key() {
 }
 
 void display_status() {
-#if 0
     g_display.firstPage();
     do
     {
@@ -164,9 +175,9 @@ void display_status() {
         
         g_display.setFont(&FreeMonoBold12pt7b);
         g_display.setCursor(10, 95);
-        printf("Rolls: %d\n", g_rolls.length());
+        g_display.printf("Rolls: %d\n", g_rolls.length());
         g_display.setCursor(10, 123);
-        printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
+        g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
         
         g_display.setFont(&FreeSansBold9pt7b);
         g_display.setCursor(0, 160);
@@ -174,11 +185,9 @@ void display_status() {
         g_display.println("   Press # to submit");
     }
     while (g_display.nextPage());
-#endif
 }
 
 void display_wordlist() {
-#if 0
     g_display.firstPage();
     do
     {
@@ -192,14 +201,13 @@ void display_wordlist() {
             String word0 = g_bip39.getMnemonic(g_bip39.getWord(ndx));
             String word1 = g_bip39.getMnemonic(g_bip39.getWord(ndx+1));
             g_display.setCursor(col, row);
-            printf("%s  %s", word0.c_str(), word1.c_str());
+            g_display.printf("%s  %s", word0.c_str(), word1.c_str());
         }
         g_display.setFont(&FreeSansBold9pt7b);
         g_display.setCursor(20, 180);
         g_display.println("Press * to clear");
     }
     while (g_display.nextPage());
-#endif
 }
 
 void slip39_wordlist() {
@@ -247,7 +255,11 @@ void random_buffer(uint8_t *buf, size_t len) {
     uint32_t r = 0;
     for (size_t i = 0; i < len; i++) {
         if (i % 4 == 0) {
+#if defined(ESP32)
+            r = esp_random();
+#elif defined(SAMD51)
             r = trngGetRandomNumber();
+#endif
         }
         buf[i] = (r >> ((i % 4) * 8)) & 0xFF;
     }
