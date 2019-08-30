@@ -10,13 +10,16 @@
 #include <Fonts/FreeMonoBold9pt7b.h>
 #include <Fonts/FreeMonoBold12pt7b.h>
 
+extern "C" {
 #include <slip39.h>
+#include <slip39_wordlist.h>
+}
 
 #define ESP32 1
 
 #if defined(SAMD51)
 extern "C" {
-  #include "trngFunctions.h"
+#include "trngFunctions.h"
 }
 #endif
 
@@ -66,25 +69,148 @@ void setup() {
 }
 
 void loop() {
-#if 0
-    Serial.println("HELLO");
-    delay(1000);
+    // no_input_or_display();
+    // make_bip39_key();
+    recover_slip39();
+}
 
-    g_rolls = "123456";
+int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
+
+int g_ndx = 0;
+int g_pos = 0;
     
-    generate_key();
-            
-    for (int ndx = 0; ndx < 12; ndx += 2) {
-        int col = 15;
-        int row = ndx*10 + 40;
-        String word0 = g_bip39.getMnemonic(g_bip39.getWord(ndx));
-        String word1 = g_bip39.getMnemonic(g_bip39.getWord(ndx+1));
-        Serial.println(word0 + " " + word1);
+void recover_slip39() {
+    display_words();
+    Serial.println("reading keypad");
+    char key;
+    do {
+        key = g_keypad.getKey();
+    } while (key == NO_KEY);
+    Serial.println("keypad saw " + String(key));
+    switch (key) {
+    case NO_KEY:
+        break;
+    case '4':
+        if (g_pos >= 1)
+            --g_pos;
+        break;
+    case '6':
+        if (g_pos <= 2)
+            ++g_pos;
+        break;
+    case '2':
+        jump_down();
+        break;
+    case '8':
+        jump_up();
+        break;
+    default:
+        break;
     }
-    
-    slip39_wordlist();
-#endif
-    
+}
+
+String prefix(int word) {
+    return String(slip39_wordlist[word]).substring(0, g_pos);
+}
+
+char current(int word) {
+    return slip39_wordlist[word][g_pos];
+}
+
+bool unique_match() {
+    // Does the previous word also match?
+    if (g_wordndx[g_ndx] > 0)
+        if (prefix(g_wordndx[g_ndx] - 1) == prefix(g_wordndx[g_ndx]))
+            return false;
+    // Does the next word also match?
+    if (g_wordndx[g_ndx] < 1023)
+        if (prefix(g_wordndx[g_ndx] + 1) == prefix(g_wordndx[g_ndx]))
+            return false;
+    return true;
+}
+
+void jump_down() {
+    // Find the previous word that differs in the cursor position.
+    int wordndx0 = g_wordndx[g_ndx];	// remember starting wordndx
+    String prefix0 = prefix(g_wordndx[g_ndx]);
+    char curr0 = current(g_wordndx[g_ndx]);
+    do {
+        if (g_wordndx[g_ndx] == 0)
+            g_wordndx[g_ndx] = 1023;
+        else
+            --g_wordndx[g_ndx];
+        // If we've returned to the original there are no choices.
+        if (g_wordndx[g_ndx] == wordndx0)
+            break;
+    } while (prefix(g_wordndx[g_ndx]) != prefix0 ||
+             current(g_wordndx[g_ndx]) == curr0);
+}
+
+void jump_up() {
+    // Find the next word that differs in the cursor position.
+    int wordndx0 = g_wordndx[g_ndx];	// remember starting wordndx
+    String prefix0 = prefix(g_wordndx[g_ndx]);
+    char curr0 = current(g_wordndx[g_ndx]);
+    do {
+        if (g_wordndx[g_ndx] == 1023)
+            g_wordndx[g_ndx] = 0;
+        else
+            ++g_wordndx[g_ndx];
+        // If we've returned to the original there are no choices.
+        if (g_wordndx[g_ndx] == wordndx0)
+            break;
+    } while (prefix(g_wordndx[g_ndx]) != prefix0 ||
+             current(g_wordndx[g_ndx]) == curr0);
+}
+
+void display_words() {
+    int xoff = 20;
+    int yoff = 95;
+    int width = 14;
+    int height = 20;
+    int yborder = 4;
+
+    g_display.firstPage();
+    do
+    {
+        g_display.setRotation(1);
+        g_display.setPartialWindow(0, 0, 200, 200);
+        g_display.fillScreen(GxEPD_WHITE);
+        g_display.setFont(&FreeMonoBold12pt7b);
+        
+        if (unique_match()) {
+            String word = String(slip39_wordlist[g_wordndx[g_ndx]]);
+            g_display.fillRect(xoff, yoff-height+yborder,
+                               width * (word.length() + 3), height,
+                               GxEPD_BLACK);
+        
+            g_display.setTextColor(GxEPD_WHITE);
+            g_display.setCursor(xoff, yoff);
+
+            g_display.printf("%2d %s\n",
+                             g_ndx, slip39_wordlist[g_wordndx[g_ndx]]);
+
+        } else {
+            g_display.setTextColor(GxEPD_BLACK);
+            g_display.setCursor(xoff, yoff);
+            
+            g_display.printf("%2d %s\n",
+                             g_ndx, slip39_wordlist[g_wordndx[g_ndx]]);
+
+            g_display.fillRect(xoff + (g_pos+3)*width, yoff-height+yborder,
+                               width, height,
+                               GxEPD_BLACK);
+        
+            g_display.setTextColor(GxEPD_WHITE);
+            g_display.setCursor(xoff + (g_pos+3)*width, yoff);
+            g_display.printf("%c", slip39_wordlist[g_wordndx[g_ndx]][g_pos]);
+        }
+    }
+    while (g_display.nextPage());
+}
+
+void make_bip39_key() {
     if (g_rolls.length() * 2.5850 >= 128.0) {
         digitalWrite(26, HIGH);
     } else {
@@ -123,7 +249,7 @@ void loop() {
     } else {
         display_wordlist();
 
-        slip39_wordlist();
+        make_slip39_wordlist();
         
         // Wait for a keypress
         char key;
@@ -134,6 +260,27 @@ void loop() {
 
         reset_state();
     }
+}
+
+void no_input_or_display() {
+#if 0
+    Serial.println("HELLO");
+    delay(1000);
+
+    g_rolls = "123456";
+    
+    generate_key();
+            
+    for (int ndx = 0; ndx < 12; ndx += 2) {
+        int col = 15;
+        int row = ndx*10 + 40;
+        String word0 = g_bip39.getMnemonic(g_bip39.getWord(ndx));
+        String word1 = g_bip39.getMnemonic(g_bip39.getWord(ndx+1));
+        Serial.println(word0 + " " + word1);
+    }
+    
+    make_slip39_wordlist();
+#endif
 }
 
 void reset_state() {
@@ -210,7 +357,7 @@ void display_wordlist() {
     while (g_display.nextPage());
 }
 
-void slip39_wordlist() {
+void make_slip39_wordlist() {
     int gt = 3;
     int gn = 5;
     
