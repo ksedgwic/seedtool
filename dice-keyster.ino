@@ -64,12 +64,13 @@ void setup() {
 #if defined(SAMD51)
     trngInit();
 #endif
+    
+    no_input_or_display();
 
     reset_state();
 }
 
 void loop() {
-    // no_input_or_display();
     // make_bip39_key();
     recover_slip39();
 }
@@ -79,6 +80,7 @@ int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 
 int g_ndx = 0;
 int g_pos = 0;
+int g_scroll = 0;
     
 void recover_slip39() {
     display_words();
@@ -92,18 +94,25 @@ void recover_slip39() {
     case NO_KEY:
         break;
     case '4':
-        if (g_pos >= 1)
-            --g_pos;
+        move_left();
         break;
     case '6':
-        if (g_pos < strlen(slip39_wordlist[g_wordndx[g_ndx]]) - 1)
-            ++g_pos;
+        move_right();
         break;
     case '2':
         jump_down();
         break;
     case '8':
         jump_up();
+        break;
+    case '1':
+        prev_entry();
+        break;
+    case '7':
+        next_entry();
+        break;
+    case '5':
+        next_entry();
         break;
     default:
         break;
@@ -128,6 +137,16 @@ bool unique_match() {
         if (prefix(g_wordndx[g_ndx] + 1) == prefix(g_wordndx[g_ndx]))
             return false;
     return true;
+}
+
+void move_left() {
+    if (g_pos >= 1)
+        --g_pos;
+}
+
+void move_right() {
+    if (g_pos < strlen(slip39_wordlist[g_wordndx[g_ndx]]) - 1)
+        ++g_pos;
 }
 
 void jump_down() {
@@ -164,13 +183,33 @@ void jump_up() {
              current(g_wordndx[g_ndx]) == curr0);
 }
 
+void prev_entry() {
+    if (g_ndx == 0)
+        g_ndx = 19;
+    else
+        --g_ndx;
+    g_pos = 0;
+}
+
+void next_entry() {
+    if (g_ndx == 19)
+        g_ndx = 0;
+    else
+        ++g_ndx;
+    g_pos = 0;
+}
+
 void display_words() {
-    int xoff = 20;
-    int yoff = 95;
+    int xoff = 16;
+    // int yoff = 95;
+    int yoff = 25;
     int width = 14;
     int height = 20;
     int yborder = 4;
+    int nrows = 6;
 
+    compute_scroll();
+    
     g_display.firstPage();
     do
     {
@@ -178,36 +217,64 @@ void display_words() {
         g_display.setPartialWindow(0, 0, 200, 200);
         g_display.fillScreen(GxEPD_WHITE);
         g_display.setFont(&FreeMonoBold12pt7b);
-        
-        if (unique_match()) {
-            String word = String(slip39_wordlist[g_wordndx[g_ndx]]);
-            g_display.fillRect(xoff, yoff-height+yborder,
-                               width * (word.length() + 3), height,
-                               GxEPD_BLACK);
-        
-            g_display.setTextColor(GxEPD_WHITE);
-            g_display.setCursor(xoff, yoff);
 
-            g_display.printf("%2d %s\n",
-                             g_ndx, slip39_wordlist[g_wordndx[g_ndx]]);
+        for (int rr = 0; rr < nrows; ++rr) {
+            int wndx = g_scroll + rr;
+            String word = String(slip39_wordlist[g_wordndx[wndx]]);
+            Serial.println(String(wndx) + " " + word);
 
-        } else {
-            g_display.setTextColor(GxEPD_BLACK);
-            g_display.setCursor(xoff, yoff);
+            int yy = yoff + (rr * (height + yborder));
             
-            g_display.printf("%2d %s\n",
-                             g_ndx, slip39_wordlist[g_wordndx[g_ndx]]);
-
-            g_display.fillRect(xoff + (g_pos+3)*width, yoff-height+yborder,
-                               width, height,
-                               GxEPD_BLACK);
+            if (wndx != g_ndx) {
+                // Regular entry, not being edited
+                g_display.setTextColor(GxEPD_BLACK);
+                g_display.setCursor(xoff, yy);
+                g_display.printf("%2d %s\n", wndx+1, word.c_str());
+            } else {
+                // Edited entry
+                if (unique_match()) {
+                    // Unique, highlight entire word.
+                    g_display.fillRect(xoff,
+                                       yy - height + yborder,
+                                       width * (word.length() + 3),
+                                       height,
+                                       GxEPD_BLACK);
         
-            g_display.setTextColor(GxEPD_WHITE);
-            g_display.setCursor(xoff + (g_pos+3)*width, yoff);
-            g_display.printf("%c", slip39_wordlist[g_wordndx[g_ndx]][g_pos]);
+                    g_display.setTextColor(GxEPD_WHITE);
+                    g_display.setCursor(xoff, yoff);
+
+                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                } else {
+                    // Not unique, highlight cursor.
+                    g_display.setTextColor(GxEPD_BLACK);
+                    g_display.setCursor(xoff, yy);
+            
+                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                    g_display.fillRect(xoff + (g_pos+3)*width,
+                                       yy - height + yborder,
+                                       width, height,
+                                       GxEPD_BLACK);
+        
+                    g_display.setTextColor(GxEPD_WHITE);
+                    g_display.setCursor(xoff + (g_pos+3)*width, yy);
+                    g_display.printf("%c", word.c_str()[g_pos]);
+                }
+            }
         }
+        
     }
     while (g_display.nextPage());
+}
+
+void compute_scroll() {
+    if (g_ndx < 3)
+        g_scroll = 0;
+    else if (g_ndx > 17)
+        g_scroll = 14;
+    else
+        g_scroll = g_ndx - 3;
 }
 
 void make_bip39_key() {
@@ -263,10 +330,6 @@ void make_bip39_key() {
 }
 
 void no_input_or_display() {
-#if 0
-    Serial.println("HELLO");
-    delay(1000);
-
     g_rolls = "123456";
     
     generate_key();
@@ -280,7 +343,6 @@ void no_input_or_display() {
     }
     
     make_slip39_wordlist();
-#endif
 }
 
 void reset_state() {
