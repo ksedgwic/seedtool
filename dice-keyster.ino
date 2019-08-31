@@ -96,7 +96,7 @@ void recover_slip39() {
             --g_pos;
         break;
     case '6':
-        if (g_pos <= 2)
+        if (g_pos < strlen(slip39_wordlist[g_wordndx[g_ndx]]) - 1)
             ++g_pos;
         break;
     case '2':
