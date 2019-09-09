@@ -1,3 +1,2 @@
-# dice-keyster
-Arduino based BIP39 mnemonic passphrase generation using dice.
-
+# seedtool
+Arduino based BIP39 / SLIP39 mnemonic passphrase generation and backup.
