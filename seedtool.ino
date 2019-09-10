@@ -59,13 +59,14 @@ void setup() {
     Serial.begin(115200);
     while (!Serial);	// wait for serial to come online
 
-    Serial.println("dice-keyster starting");
+    Serial.println("seedtool starting");
 
 #if defined(SAMD51)
     trngInit();
 #endif
     
-    no_input_or_display();
+    // no_input_or_display();
+    verify_slip39_multilevel();
 
     reset_state();
 }
@@ -457,6 +458,56 @@ void make_slip39_wordlist() {
         Serial.println("FAIL");
     }
 }
+
+void verify_slip39_multilevel() {
+    int gt = 5;
+    char* ml[5] = {
+                      "eraser senior decision roster beard "
+                      "treat identify grumpy salt index "
+                      "fake aviation theater cubic bike "
+                      "cause research dragon emphasis counter",
+
+                      "eraser senior ceramic snake clay "
+                      "various huge numb argue hesitate "
+                      "auction category timber browser greatest "
+                      "hanger petition script leaf pickup",
+                      
+                      "eraser senior ceramic shaft dynamic "
+                      "become junior wrist silver peasant "
+                      "force math alto coal amazing "
+                      "segment yelp velvet image paces",
+#if 0
+                      // Duplicate of the prior, should fail.
+                      "eraser senior ceramic shaft dynamic "
+                      "become junior wrist silver peasant "
+                      "force math alto coal amazing "
+                      "segment yelp velvet image paces",
+#else
+                      // This one works
+                      "eraser senior ceramic round column "
+                      "hawk trust auction smug shame "
+                      "alive greatest sheriff living perfect "
+                      "corner chest sled fumes adequate",
+#endif
+                      
+                      "eraser senior decision smug corner "
+                      "ruin rescue cubic angel tackle "
+                      "skin skunk program roster trash "
+                      "rumor slush angel flea amazing",
+    };
+
+    uint8_t ms[16];
+    int msl;
+    msl = sizeof(ms);
+    int rc = combine_mnemonics(gt, (char**) ml, NULL, 0, ms, &msl);
+
+    if (rc == 0) {
+        Serial.println("VERIFIED " + String(rc));
+    } else {
+        Serial.println("FAILED " + String(rc));
+    }
+}
+
 
 extern "C" {
 void random_buffer(uint8_t *buf, size_t len) {
