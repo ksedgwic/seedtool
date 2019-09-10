@@ -74,6 +74,7 @@ void setup() {
     digitalWrite(26, LOW);
     
     g_display.init(115200);
+    g_display.setRotation(1);
 
     Serial.begin(115200);
     while (!Serial);	// wait for serial to come online
@@ -88,6 +89,8 @@ void setup() {
 }
 
 void loop() {
+    full_window_clear();
+    
     switch (g_uistate) {
     case SEEDLESS_MENU:
         seedless_menu();
@@ -102,6 +105,16 @@ void loop() {
         Serial.println("loop: unknown g_uistate " + String(g_uistate));
         break;
     }
+}
+
+void full_window_clear() {
+    g_display.firstPage();
+    do
+    {
+        g_display.setFullWindow();
+        g_display.fillScreen(GxEPD_WHITE);
+    }
+    while (g_display.nextPage());
 }
 
 void reset_state() {
@@ -132,9 +145,8 @@ void seedless_menu() {
     g_display.firstPage();
     do
     {
-        g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
+        // g_display.fillScreen(GxEPD_WHITE);
         g_display.setTextColor(GxEPD_BLACK);
 
         int xx = xoff;
@@ -147,10 +159,10 @@ void seedless_menu() {
         g_display.setFont(&FreeSansBold9pt7b);
         g_display.setCursor(xx, yy);
         g_display.println("A - Generate Seed");
-        yy += H_FSB9 + YM_FSB9;
+        yy += H_FSB9 + 2*YM_FSB9;
         g_display.setCursor(xx, yy);
         g_display.println("B - Restore BIP39");
-        yy += H_FSB9 + YM_FSB9;
+        yy += H_FSB9 + 2*YM_FSB9;
         g_display.setCursor(xx, yy);
         g_display.println("C - Restore SLIP39");
     }
@@ -171,77 +183,78 @@ void seedless_menu() {
 }
 
 void generate_seed() {
-    if (g_rolls.length() * 2.5850 >= 128.0) {
-        digitalWrite(26, HIGH);
-    } else {
-        digitalWrite(26, LOW);
-    }
+    while (true) {
+        if (g_rolls.length() * 2.5850 >= 128.0) {
+            digitalWrite(26, HIGH);
+        } else {
+            digitalWrite(26, LOW);
+        }
     
-    int xoff = 14;
-    int yoff = 8;
+        int xoff = 14;
+        int yoff = 8;
     
-    g_display.firstPage();
-    do
-    {
-        g_display.setRotation(1);
-        g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
-        g_display.setTextColor(GxEPD_BLACK);
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
 
-        int xx = xoff;
-        int yy = yoff + (H_FSB12 + YM_FSB12);
-        g_display.setFont(&FreeSansBold12pt7b);
-        g_display.setCursor(xx, yy);
-        g_display.println("Generate Seed");
+            int xx = xoff;
+            int yy = yoff + (H_FSB12 + YM_FSB12);
+            g_display.setFont(&FreeSansBold12pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("Generate Seed");
 
-        yy += 10;
+            yy += 10;
         
-        yy += H_FSB9 + YM_FSB9;
-        g_display.setFont(&FreeSansBold9pt7b);
-        g_display.setCursor(xx, yy);
-        g_display.println("Enter Dice Rolls");
+            yy += H_FSB9 + YM_FSB9;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("Enter Dice Rolls");
 
-        yy += 10;
+            yy += 10;
         
-        yy += H_FMB12 + YM_FMB12;
-        g_display.setFont(&FreeMonoBold12pt7b);
-        g_display.setCursor(xx, yy);
-        g_display.printf("Rolls: %d\n", g_rolls.length());
-        yy += H_FMB12 + YM_FMB12;
-        g_display.setCursor(xx, yy);
-        g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
+            yy += H_FMB12 + YM_FMB12;
+            g_display.setFont(&FreeMonoBold12pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.printf("Rolls: %d\n", g_rolls.length());
+            yy += H_FMB12 + YM_FMB12;
+            g_display.setCursor(xx, yy);
+            g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
 
-        // bottom-relative position
-        xx = xoff + 10;
-        yy = Y_MAX - 2*(H_FSB9 + YM_FSB9);
-        g_display.setFont(&FreeSansBold9pt7b);
-        g_display.setCursor(xx, yy);
-        g_display.println("Press * to clear");
-        yy += H_FSB9 + YM_FSB9;
-        g_display.setCursor(xx, yy);
-        g_display.println("Press # to submit");
-    }
-    while (g_display.nextPage());
+            // bottom-relative position
+            xx = xoff + 10;
+            yy = Y_MAX - 2*(H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("Press * to clear");
+            yy += H_FSB9 + YM_FSB9;
+            g_display.setCursor(xx, yy);
+            g_display.println("Press # to submit");
+        }
+        while (g_display.nextPage());
     
-    char key;
-    do {
-        key = g_keypad.getKey();
-    } while (key == NO_KEY);
-    Serial.println("generate_seed saw " + String(key));
-    switch (key) {
-    case '1': case '2': case '3':
-    case '4': case '5': case '6':
-        g_rolls += key;
-        break;
-    case '*':
-        g_rolls = "";
-        break;
-    case '#':
-        g_submitted = true;
-        seed_from_rolls();
-        break;
-    default:
-        break;
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("generate_seed saw " + String(key));
+        switch (key) {
+        case '1': case '2': case '3':
+        case '4': case '5': case '6':
+            g_rolls += key;
+            break;
+        case '*':
+            g_rolls = "";
+            break;
+        case '#':
+            g_submitted = true;
+            seed_from_rolls();
+            return;
+        default:
+            break;
+        }
     }
 }
 
@@ -262,9 +275,8 @@ void seedy_menu() {
     g_display.firstPage();
     do
     {
-        g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
+        // g_display.fillScreen(GxEPD_WHITE);
         g_display.setTextColor(GxEPD_BLACK);
 
         int xx = xoff;
@@ -277,10 +289,10 @@ void seedy_menu() {
         g_display.setFont(&FreeSansBold9pt7b);
         g_display.setCursor(xx, yy);
         g_display.println("A - Display BIP39");
-        yy += H_FSB9 + YM_FSB9;
+        yy += H_FSB9 + 2*YM_FSB9;
         g_display.setCursor(xx, yy);
         g_display.println("B - Generate SLIP39");
-        yy += H_FSB9 + YM_FSB9;
+        yy += H_FSB9 + 2*YM_FSB9;
         g_display.setCursor(xx, yy);
         g_display.println("C - Wipe Seed");
     }
@@ -438,9 +450,8 @@ void display_words() {
     g_display.firstPage();
     do
     {
-        g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
+        // g_display.fillScreen(GxEPD_WHITE);
         g_display.setFont(&FreeMonoBold12pt7b);
 
         for (int rr = 0; rr < nrows; ++rr) {
@@ -589,9 +600,8 @@ void display_status() {
     g_display.firstPage();
     do
     {
-        g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
+        // g_display.fillScreen(GxEPD_WHITE);
         g_display.setTextColor(GxEPD_BLACK);
         
         g_display.setFont(&FreeSansBold12pt7b);
@@ -618,9 +628,8 @@ void display_wordlist() {
     g_display.firstPage();
     do
     {
-        g_display.setRotation(1);
         g_display.setPartialWindow(0, 0, 200, 200);
-        g_display.fillScreen(GxEPD_WHITE);
+        // g_display.fillScreen(GxEPD_WHITE);
         g_display.setFont(&FreeSansBold9pt7b);
         for (int ndx = 0; ndx < 12; ndx += 2) {
             int col = 15;
