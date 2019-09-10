@@ -43,10 +43,29 @@ byte rowPins_[rows_] = {13, 12, 27, 33};
 byte colPins_[cols_] = {15, 32, 14, 22};
 Keypad g_keypad = Keypad(makeKeymap(keys_), rowPins_, colPins_, rows_, cols_);
 
+enum UIState {
+    SEEDLESS_MENU,
+    GENERATE_SEED,
+    RESTORE_BIP39,
+    RESTORE_SLIP39,
+    SEEDY_MENU,
+    DISPLAY_BIP39,
+    GENERATE_SLIP39,
+};
+
+UIState g_uistate;
 String g_rolls;
 bool g_submitted;
 Bip39 g_bip39;
+uint8_t g_master_secret[16];
 
+int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
+
+int g_ndx = 0;
+int g_pos = 0;
+int g_scroll = 0;
+    
 void setup() {
     pinMode(25, OUTPUT);	// Blue LED
     digitalWrite(25, HIGH);
@@ -64,25 +83,230 @@ void setup() {
 #if defined(SAMD51)
     trngInit();
 #endif
-    
-    // no_input_or_display();
-    verify_slip39_multilevel();
 
     reset_state();
 }
 
 void loop() {
-    // make_bip39_key();
-    recover_slip39();
+    switch (g_uistate) {
+    case SEEDLESS_MENU:
+        seedless_menu();
+        break;
+    case GENERATE_SEED:
+        generate_seed();
+        break;
+    case SEEDY_MENU:
+        seedy_menu();
+        break;
+    default:
+        Serial.println("loop: unknown g_uistate " + String(g_uistate));
+        break;
+    }
 }
 
-int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
+void reset_state() {
+    g_uistate = SEEDLESS_MENU;
+    g_rolls = "";
+    g_submitted = false;
+    memset(g_master_secret, '\0', sizeof(g_master_secret));
+}
 
-int g_ndx = 0;
-int g_pos = 0;
-int g_scroll = 0;
+int const Y_MAX = 200;
+
+// FreeSansBold9pt7b
+int const H_FSB9 = 16;	// height
+int const YM_FSB9 = 6;	// y-margin
+
+// FreeSansBold12pt7b
+int const H_FSB12 = 20;	// height
+int const YM_FSB12 = 9;	// y-margin
+
+// FreeMonoBold12pt7b
+int const H_FMB12 = 20;	// height
+int const YM_FMB12 = 4;	// y-margin
+
+void seedless_menu() {
+    int xoff = 16;
+    int yoff = 10;
     
+    g_display.firstPage();
+    do
+    {
+        g_display.setRotation(1);
+        g_display.setPartialWindow(0, 0, 200, 200);
+        g_display.fillScreen(GxEPD_WHITE);
+        g_display.setTextColor(GxEPD_BLACK);
+
+        int xx = xoff;
+        int yy = yoff + (H_FSB12 + YM_FSB12);
+        g_display.setFont(&FreeSansBold12pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("No Seed");
+
+        yy = yoff + 3*(H_FSB9 + YM_FSB9);
+        g_display.setFont(&FreeSansBold9pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("A - Generate Seed");
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setCursor(xx, yy);
+        g_display.println("B - Restore BIP39");
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setCursor(xx, yy);
+        g_display.println("C - Restore SLIP39");
+    }
+    while (g_display.nextPage());
+
+    while (true) {
+        char key = g_keypad.getKey();
+        Serial.println("seedless_menu saw " + String(key));
+        switch (key) {
+        case 'A':
+            g_uistate = GENERATE_SEED;
+            return;
+        case NO_KEY:
+        default:
+            break;
+        }
+    }
+}
+
+void generate_seed() {
+    if (g_rolls.length() * 2.5850 >= 128.0) {
+        digitalWrite(26, HIGH);
+    } else {
+        digitalWrite(26, LOW);
+    }
+    
+    int xoff = 14;
+    int yoff = 8;
+    
+    g_display.firstPage();
+    do
+    {
+        g_display.setRotation(1);
+        g_display.setPartialWindow(0, 0, 200, 200);
+        g_display.fillScreen(GxEPD_WHITE);
+        g_display.setTextColor(GxEPD_BLACK);
+
+        int xx = xoff;
+        int yy = yoff + (H_FSB12 + YM_FSB12);
+        g_display.setFont(&FreeSansBold12pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("Generate Seed");
+
+        yy += 10;
+        
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setFont(&FreeSansBold9pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("Enter Dice Rolls");
+
+        yy += 10;
+        
+        yy += H_FMB12 + YM_FMB12;
+        g_display.setFont(&FreeMonoBold12pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.printf("Rolls: %d\n", g_rolls.length());
+        yy += H_FMB12 + YM_FMB12;
+        g_display.setCursor(xx, yy);
+        g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
+
+        // bottom-relative position
+        xx = xoff + 10;
+        yy = Y_MAX - 2*(H_FSB9 + YM_FSB9);
+        g_display.setFont(&FreeSansBold9pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("Press * to clear");
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setCursor(xx, yy);
+        g_display.println("Press # to submit");
+    }
+    while (g_display.nextPage());
+    
+    char key;
+    do {
+        key = g_keypad.getKey();
+    } while (key == NO_KEY);
+    Serial.println("generate_seed saw " + String(key));
+    switch (key) {
+    case '1': case '2': case '3':
+    case '4': case '5': case '6':
+        g_rolls += key;
+        break;
+    case '*':
+        g_rolls = "";
+        break;
+    case '#':
+        g_submitted = true;
+        seed_from_rolls();
+        break;
+    default:
+        break;
+    }
+}
+
+void seed_from_rolls() {
+    Sha256Class sha256;
+    sha256.init();
+    for(uint8_t ii=0; ii < g_rolls.length(); ii++) {
+        sha256.write(g_rolls[ii]);
+    }
+    memcpy(g_master_secret, sha256.result(), sizeof(g_master_secret));
+    g_uistate = SEEDY_MENU;
+}
+
+void seedy_menu() {
+    int xoff = 16;
+    int yoff = 10;
+    
+    g_display.firstPage();
+    do
+    {
+        g_display.setRotation(1);
+        g_display.setPartialWindow(0, 0, 200, 200);
+        g_display.fillScreen(GxEPD_WHITE);
+        g_display.setTextColor(GxEPD_BLACK);
+
+        int xx = xoff;
+        int yy = yoff + (H_FSB12 + YM_FSB12);
+        g_display.setFont(&FreeSansBold12pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("Seed Present");
+
+        yy = yoff + 3*(H_FSB9 + YM_FSB9);
+        g_display.setFont(&FreeSansBold9pt7b);
+        g_display.setCursor(xx, yy);
+        g_display.println("A - Display BIP39");
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setCursor(xx, yy);
+        g_display.println("B - Generate SLIP39");
+        yy += H_FSB9 + YM_FSB9;
+        g_display.setCursor(xx, yy);
+        g_display.println("C - Wipe Seed");
+    }
+    while (g_display.nextPage());
+
+    while (true) {
+        char key = g_keypad.getKey();
+        Serial.println("seedy_menu saw " + String(key));
+        switch (key) {
+        case 'A':
+            g_uistate = DISPLAY_BIP39;
+            return;
+        case 'B':
+            g_uistate = GENERATE_SLIP39;
+            return;
+        case 'C':
+            reset_state();
+            g_uistate = SEEDLESS_MENU;
+            return;
+        case NO_KEY:
+        default:
+            break;
+        }
+    }
+}
+
 void recover_slip39() {
     display_words();
     Serial.println("reading keypad");
@@ -345,13 +569,6 @@ void no_input_or_display() {
     
     make_slip39_wordlist();
 }
-
-void reset_state() {
-    g_rolls = "";
-    g_submitted = false;
-}
-
-uint8_t g_master_secret[16];
 
 void generate_key() {
     Sha256Class sha256;
