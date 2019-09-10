@@ -56,15 +56,15 @@ enum UIState {
 UIState g_uistate;
 String g_rolls;
 bool g_submitted;
-Bip39 g_bip39;
 uint8_t g_master_secret[16];
+Bip39 g_bip39;
 
 int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
 
-int g_ndx = 0;
-int g_pos = 0;
-int g_scroll = 0;
+int g_ndx = 0;		// index of "selected" word
+int g_pos = 0;		// char position of cursor
+int g_scroll = 0;	// index of scrolled window
     
 void setup() {
     pinMode(25, OUTPUT);	// Blue LED
@@ -98,8 +98,20 @@ void loop() {
     case GENERATE_SEED:
         generate_seed();
         break;
+    case RESTORE_BIP39:
+        Serial.println("loop: RESTORE_BIP39 unimplemented");
+        break;
+    case RESTORE_SLIP39:
+        Serial.println("loop: RESTORE_SLIP39 unimplemented");
+        break;
     case SEEDY_MENU:
         seedy_menu();
+        break;
+    case DISPLAY_BIP39:
+        display_bip39();
+        break;
+    case GENERATE_SLIP39:
+        Serial.println("loop: GENERATE_SLIP39 unimplemented");
         break;
     default:
         Serial.println("loop: unknown g_uistate " + String(g_uistate));
@@ -118,10 +130,18 @@ void full_window_clear() {
 }
 
 void reset_state() {
+    digitalWrite(26, LOW);  // turn off the green LED
+            
     g_uistate = SEEDLESS_MENU;
     g_rolls = "";
     g_submitted = false;
+
+    // Clear the master secret.
     memset(g_master_secret, '\0', sizeof(g_master_secret));
+
+    // Clear the BIP39 mnemonic (regenerate on all zero secret)
+    g_bip39.setPayloadBytes(sizeof(g_master_secret));
+    g_bip39.setPayload(sizeof(g_master_secret), (uint8_t *) g_master_secret);
 }
 
 int const Y_MAX = 200;
@@ -135,7 +155,7 @@ int const H_FSB12 = 20;	// height
 int const YM_FSB12 = 9;	// y-margin
 
 // FreeMonoBold12pt7b
-int const H_FMB12 = 20;	// height
+int const H_FMB12 = 18;	// height
 int const YM_FMB12 = 4;	// y-margin
 
 void seedless_menu() {
@@ -184,12 +204,6 @@ void seedless_menu() {
 
 void generate_seed() {
     while (true) {
-        if (g_rolls.length() * 2.5850 >= 128.0) {
-            digitalWrite(26, HIGH);
-        } else {
-            digitalWrite(26, LOW);
-        }
-    
         int xoff = 14;
         int yoff = 8;
     
@@ -251,6 +265,8 @@ void generate_seed() {
         case '#':
             g_submitted = true;
             seed_from_rolls();
+            digitalWrite(26, HIGH);		// turn on green LED
+            g_uistate = DISPLAY_BIP39;
             return;
         default:
             break;
@@ -259,13 +275,17 @@ void generate_seed() {
 }
 
 void seed_from_rolls() {
+    // Convert supplied entropy into master secret.
     Sha256Class sha256;
     sha256.init();
     for(uint8_t ii=0; ii < g_rolls.length(); ii++) {
         sha256.write(g_rolls[ii]);
     }
     memcpy(g_master_secret, sha256.result(), sizeof(g_master_secret));
-    g_uistate = SEEDY_MENU;
+
+    // Generate the BIP39 mnemonic for this secret.
+    g_bip39.setPayloadBytes(sizeof(g_master_secret));
+    g_bip39.setPayload(sizeof(g_master_secret), (uint8_t *)g_master_secret);
 }
 
 void seedy_menu() {
@@ -318,6 +338,73 @@ void seedy_menu() {
         }
     }
 }
+
+void display_bip39() {
+    int scroll = 0;
+    
+    while (true) {
+        int xoff = 12;
+        int yoff = 0;
+        int nrows = 6;
+    
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("BIP39 Mnemonic");
+            yy += H_FSB9 + YM_FSB9;
+            
+            yy += 4;
+        
+            g_display.setFont(&FreeMonoBold12pt7b);
+            for (int rr = 0; rr < nrows; ++rr) {
+                int wndx = scroll + rr;
+                uint16_t word = g_bip39.getWord(wndx);
+                g_display.setCursor(xx, yy);
+                g_display.printf("%2d %s", wndx+1, g_bip39.getMnemonic(word));
+                yy += H_FMB12 + YM_FMB12;
+            }
+            
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("1,7-Up,Down #-Done");
+        }
+        while (g_display.nextPage());
+        
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("display_bip39 saw " + String(key));
+        switch (key) {
+        case '1':
+            if (scroll > 0)
+                scroll -= 1;
+            break;
+        case '7':
+            if (scroll < 6)
+                scroll += 1;
+            break;
+        case '#':
+            g_uistate = SEEDY_MENU;
+            return;
+        default:
+            break;
+        }
+    }
+}
+
+// ----------------------------------------------------------------
 
 void recover_slip39() {
     display_words();
