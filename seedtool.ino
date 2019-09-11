@@ -59,6 +59,9 @@ String g_rolls;
 bool g_submitted;
 uint8_t g_master_secret[16];
 Bip39 g_bip39;
+int g_slip39_thresh;
+int g_slip39_nshares;
+char** g_slip39_shares = NULL;
 
 int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
@@ -159,6 +162,7 @@ int const H_FSB12 = 20;	// height
 int const YM_FSB12 = 9;	// y-margin
 
 // FreeMonoBold12pt7b
+int const W_FMB12 = 14;	// width
 int const H_FMB12 = 18;	// height
 int const YM_FMB12 = 4;	// y-margin
 
@@ -344,6 +348,7 @@ void seedy_menu() {
 }
 
 void display_bip39() {
+    int const nwords = 12;
     int scroll = 0;
     
     while (true) {
@@ -396,7 +401,7 @@ void display_bip39() {
                 scroll -= 1;
             break;
         case '7':
-            if (scroll < 6)
+            if (scroll < (nwords - nrows))
                 scroll += 1;
             break;
         case '#':
@@ -406,6 +411,23 @@ void display_bip39() {
             break;
         }
     }
+}
+
+// Append a character to a SLIP39 config value, check range.
+String config_slip39_addkey(String str0, char key) {
+    String newstr;
+    if (str0 == " ")
+        newstr = key;
+    else
+        newstr = str0 + key;
+    int val = newstr.toInt();
+    if (val == 0)	// didn't convert to integer somehow
+        return str0;
+    if (val < 1)	// too small
+        return str0;
+    if (val > 16)	// too big
+        return str0;
+    return newstr;
 }
 
 void config_slip39() {
@@ -436,9 +458,38 @@ void config_slip39() {
             g_display.setFont(&FreeMonoBold12pt7b);
             g_display.setCursor(xx, yy);
             g_display.printf(" Thresh: %s", threshstr.c_str());
+
+            if (!thresh_done) {
+                int xxx = xx + (9 * W_FMB12);
+                int yyy = yy - H_FMB12;
+                g_display.fillRect(xxx,
+                                   yyy,
+                                   W_FMB12 * threshstr.length(),
+                                   H_FMB12 + YM_FMB12,
+                                   GxEPD_BLACK);
+                g_display.setTextColor(GxEPD_WHITE);
+                g_display.setCursor(xxx, yy);
+                g_display.printf("%s", threshstr.c_str());
+                g_display.setTextColor(GxEPD_BLACK);
+            }
+            
             yy += H_FMB12 + 2*YM_FMB12;
             g_display.setCursor(xx, yy);
             g_display.printf("NShares: %s", nsharestr.c_str());
+
+            if (thresh_done) {
+                int xxx = xx + (9 * W_FMB12);
+                int yyy = yy - H_FMB12;
+                g_display.fillRect(xxx,
+                                   yyy,
+                                   W_FMB12 * nsharestr.length(),
+                                   H_FMB12 + YM_FMB12,
+                                   GxEPD_BLACK);
+                g_display.setTextColor(GxEPD_WHITE);
+                g_display.setCursor(xxx, yy);
+                g_display.printf("%s", nsharestr.c_str());
+                g_display.setTextColor(GxEPD_BLACK);
+            }
 
             // bottom-relative position
             xx = xoff + 2;
@@ -449,7 +500,11 @@ void config_slip39() {
             if (!thresh_done) {
                 g_display.println("*-Clear    #-Next");
             } else {
-                g_display.println("*-Clear    #-Done");
+                // If nsharestr field is empty its a prev
+                if (nsharestr == " ")
+                    g_display.println("*-Prev     #-Done");
+                else
+                    g_display.println("*-Clear    #-Done");
             }
         }
         while (g_display.nextPage());
@@ -460,11 +515,22 @@ void config_slip39() {
         } while (key == NO_KEY);
         Serial.println("config_slip39 saw " + String(key));
         switch (key) {
+        case '0': case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': case '8': case '9':
+            if (!thresh_done)
+                threshstr = config_slip39_addkey(threshstr, key);
+            else
+                nsharestr = config_slip39_addkey(nsharestr, key);
+            break;
         case '*':
             if (!thresh_done) {
-                threshstr = "";
+                threshstr = " ";
             } else {
-                nsharestr = "";
+                // If nsharestr field is empty its a prev
+                if (nsharestr == " ")
+                    thresh_done = false;
+                else
+                    nsharestr = " ";
             }
             break;
         case '#':
@@ -472,6 +538,15 @@ void config_slip39() {
                 thresh_done = true;
                 break;
             } else {
+                if (threshstr.toInt() > nsharestr.toInt()) {
+                    // Threshold is greater than nshares, put the cursor
+                    // back on the threshold.
+                    thresh_done = false;
+                    break;
+                }
+                g_slip39_thresh = threshstr.toInt();
+                g_slip39_nshares = nsharestr.toInt();
+                generate_slip39_shares();
                 g_uistate = DISPLAY_SLIP39;
                 return;
             }
@@ -481,8 +556,129 @@ void config_slip39() {
     }
 }
 
+void generate_slip39_shares() {
+    int nshares = g_slip39_nshares;
+    
+    // If there are already shares, free them.
+    if (g_slip39_shares) {
+        for (int ndx = 0; g_slip39_shares[ndx]; ++ndx)
+            free(g_slip39_shares[ndx]);
+        free(g_slip39_shares);
+    }
+
+    // Allocate space for new shares
+    g_slip39_shares = (char **) malloc(sizeof(char *) * (nshares+1));
+    for (int ndx = 0; ndx < nshares; ++ndx)
+        g_slip39_shares[ndx] = (char *)malloc(MNEMONIC_LIST_LEN);
+    g_slip39_shares[nshares] = NULL; // sentinel
+
+    generate_mnemonics(g_slip39_thresh, g_slip39_nshares,
+                       g_master_secret, sizeof(g_master_secret),
+                       NULL, 0, 0, g_slip39_shares);
+}
+
+// Extract the indicted word from the wordlist.
+String slip39_select(char* wordlist, int wordndx) {
+    // Start at the begining of the wordlist.
+    char* pos = wordlist;
+
+    // Advance to the nth word.
+    for (int ii = 0; ii < wordndx; ++ii) {
+        do {
+            ++pos;
+        } while (*pos != ' ');
+        // stops on the next space
+        ++pos; // advance to the next word.
+    }
+
+    char* pos0 = pos;
+    do {
+        ++pos;
+    } while (*pos != ' ');
+    char* epos = pos;
+
+    return String(pos0).substring(0, epos-pos0);	// yuk
+}
+
 void display_slip39() {
-    g_uistate = SEEDY_MENU;	// FIXME - Implement and remove this.
+    int const nwords = 20;
+    int sharendx = 0;
+    int scroll = 0;
+    
+    while (true) {
+        int xoff = 12;
+        int yoff = 0;
+        int nrows = 6;
+    
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.printf("SLIP39 %d/%d", sharendx+1, g_slip39_nshares);
+            yy += H_FSB9 + YM_FSB9;
+            
+            yy += 4;
+        
+            g_display.setFont(&FreeMonoBold12pt7b);
+            for (int rr = 0; rr < nrows; ++rr) {
+                int wndx = scroll + rr;
+                String word = slip39_select(g_slip39_shares[sharendx], wndx);
+                g_display.setCursor(xx, yy);
+                g_display.printf("%2d %s", wndx+1, word.c_str());
+                yy += H_FMB12 + YM_FMB12;
+            }
+            
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            if (sharendx < (g_slip39_nshares-1))
+                g_display.println("1,7-Up,Down #-Next");
+            else
+                g_display.println("1,7-Up,Down #-Done");
+        }
+        while (g_display.nextPage());
+        
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("display_slip39 saw " + String(key));
+        switch (key) {
+        case '1':
+            if (scroll > 0)
+                scroll -= 1;
+            break;
+        case '7':
+            if (scroll < (nwords - nrows))
+                scroll += 1;
+            break;
+        case '*':
+            if (sharendx > 0) {
+                --sharendx;
+                scroll = 0;
+            }
+            break;
+        case '#':
+            if (sharendx < (g_slip39_nshares-1)) {
+                ++sharendx;
+            } else {
+                g_uistate = SEEDY_MENU;
+                return;
+            }
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 // ----------------------------------------------------------------
