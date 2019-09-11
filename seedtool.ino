@@ -50,7 +50,8 @@ enum UIState {
     RESTORE_SLIP39,
     SEEDY_MENU,
     DISPLAY_BIP39,
-    GENERATE_SLIP39,
+    CONFIG_SLIP39,
+    DISPLAY_SLIP39,
 };
 
 UIState g_uistate;
@@ -110,8 +111,11 @@ void loop() {
     case DISPLAY_BIP39:
         display_bip39();
         break;
-    case GENERATE_SLIP39:
-        Serial.println("loop: GENERATE_SLIP39 unimplemented");
+    case CONFIG_SLIP39:
+        config_slip39();
+        break;
+    case DISPLAY_SLIP39:
+        display_slip39();
         break;
     default:
         Serial.println("loop: unknown g_uistate " + String(g_uistate));
@@ -326,7 +330,7 @@ void seedy_menu() {
             g_uistate = DISPLAY_BIP39;
             return;
         case 'B':
-            g_uistate = GENERATE_SLIP39;
+            g_uistate = CONFIG_SLIP39;
             return;
         case 'C':
             reset_state();
@@ -402,6 +406,83 @@ void display_bip39() {
             break;
         }
     }
+}
+
+void config_slip39() {
+    bool thresh_done = false;
+    String threshstr = "3";
+    String nsharestr = "5";
+    
+    while (true) {
+        int xoff = 20;
+        int yoff = 8;
+    
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("Configure SLIP39");
+
+            yy += 10;
+
+            yy += H_FMB12 + 2*YM_FMB12;
+            g_display.setFont(&FreeMonoBold12pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.printf(" Thresh: %s", threshstr.c_str());
+            yy += H_FMB12 + 2*YM_FMB12;
+            g_display.setCursor(xx, yy);
+            g_display.printf("NShares: %s", nsharestr.c_str());
+
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+
+            if (!thresh_done) {
+                g_display.println("*-Clear    #-Next");
+            } else {
+                g_display.println("*-Clear    #-Done");
+            }
+        }
+        while (g_display.nextPage());
+            
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("config_slip39 saw " + String(key));
+        switch (key) {
+        case '*':
+            if (!thresh_done) {
+                threshstr = "";
+            } else {
+                nsharestr = "";
+            }
+            break;
+        case '#':
+            if (!thresh_done) {
+                thresh_done = true;
+                break;
+            } else {
+                g_uistate = DISPLAY_SLIP39;
+                return;
+            }
+        default:
+            break;
+        }
+    }
+}
+
+void display_slip39() {
+    g_uistate = SEEDY_MENU;	// FIXME - Implement and remove this.
 }
 
 // ----------------------------------------------------------------
