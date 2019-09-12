@@ -48,11 +48,15 @@ enum UIState {
     GENERATE_SEED,
     RESTORE_BIP39,
     RESTORE_SLIP39,
+    ENTER_SHARE,
     SEEDY_MENU,
     DISPLAY_BIP39,
     CONFIG_SLIP39,
     DISPLAY_SLIP39,
 };
+
+// This will be 256 when we support multiple levels.
+#define MAX_SLIP39_SHARES	16
 
 UIState g_uistate;
 String g_rolls;
@@ -62,6 +66,9 @@ Bip39 g_bip39;
 int g_slip39_thresh;
 int g_slip39_nshares;
 char** g_slip39_shares = NULL;
+char* g_restore_shares[MAX_SLIP39_SHARES];
+int g_num_restore_shares = 0;
+int g_selected_share;
 
 int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
@@ -106,7 +113,10 @@ void loop() {
         Serial.println("loop: RESTORE_BIP39 unimplemented");
         break;
     case RESTORE_SLIP39:
-        Serial.println("loop: RESTORE_SLIP39 unimplemented");
+        restore_slip39();
+        break;
+    case ENTER_SHARE:
+        enter_share();
         break;
     case SEEDY_MENU:
         seedy_menu();
@@ -149,6 +159,11 @@ void reset_state() {
     // Clear the BIP39 mnemonic (regenerate on all zero secret)
     g_bip39.setPayloadBytes(sizeof(g_master_secret));
     g_bip39.setPayload(sizeof(g_master_secret), (uint8_t *) g_master_secret);
+
+    free_slip39_shares();
+    
+    // Clear the restore shares
+    free_restore_shares();
 }
 
 int const Y_MAX = 200;
@@ -197,11 +212,17 @@ void seedless_menu() {
     while (g_display.nextPage());
 
     while (true) {
-        char key = g_keypad.getKey();
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
         Serial.println("seedless_menu saw " + String(key));
         switch (key) {
         case 'A':
             g_uistate = GENERATE_SEED;
+            return;
+        case 'C':
+            g_uistate = RESTORE_SLIP39;
             return;
         case NO_KEY:
         default:
@@ -327,7 +348,10 @@ void seedy_menu() {
     while (g_display.nextPage());
 
     while (true) {
-        char key = g_keypad.getKey();
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
         Serial.println("seedy_menu saw " + String(key));
         switch (key) {
         case 'A':
@@ -352,9 +376,9 @@ void display_bip39() {
     int scroll = 0;
     
     while (true) {
-        int xoff = 12;
-        int yoff = 0;
-        int nrows = 6;
+        int const xoff = 12;
+        int const yoff = 0;
+        int const nrows = 6;
     
         g_display.firstPage();
         do
@@ -556,16 +580,21 @@ void config_slip39() {
     }
 }
 
-void generate_slip39_shares() {
-    int nshares = g_slip39_nshares;
-    
-    // If there are already shares, free them.
+void free_slip39_shares() {
     if (g_slip39_shares) {
         for (int ndx = 0; g_slip39_shares[ndx]; ++ndx)
             free(g_slip39_shares[ndx]);
         free(g_slip39_shares);
+        g_slip39_shares = NULL;
     }
+}
 
+void generate_slip39_shares() {
+    int nshares = g_slip39_nshares;
+
+    // If there are already shares, free them.
+    free_slip39_shares();
+    
     // Allocate space for new shares
     g_slip39_shares = (char **) malloc(sizeof(char *) * (nshares+1));
     for (int ndx = 0; ndx < nshares; ++ndx)
@@ -661,15 +690,16 @@ void display_slip39() {
             if (scroll < (nwords - nrows))
                 scroll += 1;
             break;
-        case '*':
+        case '*':	// prev
             if (sharendx > 0) {
                 --sharendx;
                 scroll = 0;
             }
             break;
-        case '#':
+        case '#':	// next / done
             if (sharendx < (g_slip39_nshares-1)) {
                 ++sharendx;
+                scroll = 0;
             } else {
                 g_uistate = SEEDY_MENU;
                 return;
@@ -679,6 +709,142 @@ void display_slip39() {
             break;
         }
     }
+}
+
+void free_restore_shares() {
+    for (int ndx = 0; ndx < g_num_restore_shares; ++ndx) {
+        free(g_restore_shares[ndx]);
+        g_restore_shares[ndx] = NULL;
+    }
+    g_num_restore_shares = 0;
+}
+
+void restore_slip39() {
+    int scroll = 0;
+    int selected = g_num_restore_shares;	// selects "add" initially
+    
+    while (true) {
+        int const xoff = 12;
+        int const yoff = 0;
+        int const nrows = 5;
+    
+        // Adjust the scroll to center the selection.
+        if (selected < 3)
+            scroll = 0;
+        else
+            scroll = selected - 3;
+        
+        // Are we showing the restore action?
+        int showrestore = g_num_restore_shares > 0;
+
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("Enter SLIP39 Shares");
+            yy += H_FSB9 + YM_FSB9;
+
+            xx = xoff + 20;
+            yy += 16;
+
+            // Do we need to scroll?
+            int disprows = g_num_restore_shares + 1 + showrestore > nrows
+                ? nrows
+                : g_num_restore_shares + 1 + showrestore;
+            
+            g_display.setFont(&FreeMonoBold12pt7b);
+            for (int rr = 0; rr < disprows; ++rr) {
+                int sharendx = scroll + rr;
+                char buffer[32];
+                if (sharendx < g_num_restore_shares) {
+                    sprintf(buffer, "Share %d", sharendx+1);
+                } else if (sharendx == g_num_restore_shares) {
+                    sprintf(buffer, "Add Share");
+                } else {
+                    sprintf(buffer, "Restore");
+                }
+                
+                g_display.setCursor(xx, yy);
+                if (sharendx != selected) {
+                    g_display.println(buffer);
+                } else {
+                    g_display.fillRect(xx,
+                                       yy - H_FMB12,
+                                       W_FMB12 * strlen(buffer),
+                                       H_FMB12 + YM_FMB12,
+                                       GxEPD_BLACK);
+                    g_display.setTextColor(GxEPD_WHITE);
+                    g_display.println(buffer);
+                    g_display.setTextColor(GxEPD_BLACK);
+                }
+
+                yy += H_FMB12 + YM_FMB12;
+            }
+            
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("1,7-Up,Down #-Do");
+        }
+        while (g_display.nextPage());
+        
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("display_bip39 saw " + String(key));
+        switch (key) {
+        case '1':
+            if (selected > 0)
+                selected -= 1;
+            break;
+        case '7':
+            if (selected < g_num_restore_shares + 1 + showrestore - 1)
+                selected += 1;
+            break;
+        case '#':
+            if (selected < g_num_restore_shares) {
+                // Edit existing share
+                g_selected_share = selected;
+                g_uistate = ENTER_SHARE;
+                return;
+            } else if (selected == g_num_restore_shares) {
+                // Add new share
+                g_selected_share = g_num_restore_shares;
+                g_restore_shares[g_selected_share] = NULL;
+                g_num_restore_shares += 1;
+                g_uistate = ENTER_SHARE;
+                return;
+            } else {
+                // Attempt restoration
+                g_uistate = SEEDLESS_MENU;	// FIXME - replace w real stuff.
+                return;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+void enter_share() {
+    if (g_restore_shares[g_selected_share])
+        free(g_restore_shares[g_selected_share]);
+    g_restore_shares[g_selected_share] =
+        strdup("eraser senior decision roster beard "
+               "treat identify grumpy salt index "
+               "fake aviation theater cubic bike "
+               "cause research dragon emphasis counter");
+    g_uistate = RESTORE_SLIP39;
 }
 
 // ----------------------------------------------------------------
