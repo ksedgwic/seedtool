@@ -731,6 +731,8 @@ void restore_slip39() {
         // Adjust the scroll to center the selection.
         if (selected < 3)
             scroll = 0;
+        else if (selected > g_num_restore_shares - 3)
+            scroll = g_num_restore_shares - 3;
         else
             scroll = selected - 3;
         
