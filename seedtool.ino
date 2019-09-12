@@ -70,6 +70,7 @@ char* g_restore_shares[MAX_SLIP39_SHARES];
 int g_num_restore_shares = 0;
 int g_selected_share;
 
+// FIXME - these should be removed
 int g_wordndx[20] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, };
 
@@ -178,7 +179,7 @@ int const YM_FSB12 = 9;	// y-margin
 
 // FreeMonoBold12pt7b
 int const W_FMB12 = 14;	// width
-int const H_FMB12 = 18;	// height
+int const H_FMB12 = 21;	// height
 int const YM_FMB12 = 4;	// y-margin
 
 void seedless_menu() {
@@ -378,7 +379,7 @@ void display_bip39() {
     while (true) {
         int const xoff = 12;
         int const yoff = 0;
-        int const nrows = 6;
+        int const nrows = 5;
     
         g_display.firstPage();
         do
@@ -394,7 +395,7 @@ void display_bip39() {
             g_display.println("BIP39 Mnemonic");
             yy += H_FSB9 + YM_FSB9;
             
-            yy += 4;
+            yy += 6;
         
             g_display.setFont(&FreeMonoBold12pt7b);
             for (int rr = 0; rr < nrows; ++rr) {
@@ -838,7 +839,111 @@ void restore_slip39() {
     }
 }
 
+#define NWORDS 20
+struct EnterShareState {
+    int nrows;				// number of words visible
+    int wordndx[NWORDS];
+    int selected;			// index of selected word
+    int pos;				// char index of cursor
+    int scroll;				// index of first visible word
+
+    EnterShareState() : nrows(5), selected(0), pos(0), scroll(0) {
+        for (int ii = 0; ii < NWORDS; ++ii)
+            wordndx[ii] = 0;
+    }
+
+    void compute_scroll() {
+        if (selected < 3)
+            scroll = 0;
+        else if (selected > NWORDS - 3)
+            scroll = NWORDS - nrows;
+        else
+            scroll = selected - 2;
+    }
+    
+    void select_prev() {
+        if (selected == 0)
+            selected = NWORDS - 1;
+        else
+            --selected;
+        pos = 0;
+    }
+
+    void select_next() {
+        if (selected == NWORDS - 1)
+            selected = 0;
+        else
+            ++selected;
+        pos = 0;
+    }
+    
+    void cursor_left() {
+        if (pos >= 1)
+            --pos;
+    }
+
+    void cursor_right() {
+        if (pos < strlen(slip39_wordlist[wordndx[selected]]) - 1)
+            ++pos;
+    }
+    
+    void word_down() {
+        // Find the previous word that differs in the cursor position.
+        int wordndx0 = wordndx[selected];	// remember starting wordndx
+        String prefix0 = prefix(wordndx[selected]);
+        char curr0 = current(wordndx[selected]);
+        do {
+            if (wordndx[selected] == 0)
+                wordndx[selected] = 1023;
+            else
+                --wordndx[selected];
+            // If we've returned to the original there are no choices.
+            if (wordndx[selected] == wordndx0)
+                break;
+        } while (prefix(wordndx[selected]) != prefix0 ||
+                 current(wordndx[selected]) == curr0);
+    }
+
+    void word_up() {
+        // Find the next word that differs in the cursor position.
+        int wordndx0 = wordndx[selected];	// remember starting wordndx
+        String prefix0 = prefix(wordndx[selected]);
+        char curr0 = current(wordndx[selected]);
+        do {
+            if (wordndx[selected] == 1023)
+                wordndx[selected] = 0;
+            else
+                ++wordndx[selected];
+            // If we've returned to the original there are no choices.
+            if (wordndx[selected] == wordndx0)
+                break;
+        } while (prefix(wordndx[selected]) != prefix0 ||
+                 current(wordndx[selected]) == curr0);
+    }
+
+    String prefix(int word) {
+        return String(slip39_wordlist[word]).substring(0, pos);
+    }
+
+    char current(int word) {
+        return slip39_wordlist[word][pos];
+    }
+
+    bool unique_match() {
+        // Does the previous word also match?
+        if (wordndx[selected] > 0)
+            if (prefix(wordndx[selected] - 1) == prefix(wordndx[selected]))
+                return false;
+        // Does the next word also match?
+        if (wordndx[selected] < 1023)
+            if (prefix(wordndx[selected] + 1) == prefix(wordndx[selected]))
+                return false;
+        return true;
+    }
+};
+
 void enter_share() {
+#if 0    
     if (g_restore_shares[g_selected_share])
         free(g_restore_shares[g_selected_share]);
     g_restore_shares[g_selected_share] =
@@ -847,10 +952,129 @@ void enter_share() {
                "fake aviation theater cubic bike "
                "cause research dragon emphasis counter");
     g_uistate = RESTORE_SLIP39;
+#endif
+
+    EnterShareState state;
+
+    // FIXME - initialize wordndx from g_restore_shares
+    
+    while (true) {
+        int const xoff = 12;
+        int const yoff = 0;
+
+        state.compute_scroll();
+
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.printf("SLIP39 Share %d", g_selected_share+1);
+            yy += H_FSB9 + YM_FSB9;
+
+            g_display.setFont(&FreeMonoBold12pt7b);
+            yy += 4;
+
+            for (int rr = 0; rr < state.nrows; ++rr) {
+                int wndx = state.scroll + rr;
+                String word = String(slip39_wordlist[state.wordndx[wndx]]);
+                Serial.println(String(wndx) + " " + word);
+
+                if (wndx != state.selected) {
+                    // Regular entry, not being edited
+                    g_display.setTextColor(GxEPD_BLACK);
+                    g_display.setCursor(xx, yy);
+                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                } else {
+                    // Edited entry
+                    if (state.unique_match()) {
+                        // Unique, highlight entire word.
+                        g_display.fillRect(xx - 1,
+                                           yy - H_FMB12 + YM_FMB12,
+                                           W_FMB12 * (word.length() + 3) + 3,
+                                           H_FMB12 + YM_FMB12,
+                                           GxEPD_BLACK);
+        
+                        g_display.setTextColor(GxEPD_WHITE);
+                        g_display.setCursor(xx, yy);
+
+                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                    } else {
+                        // Not unique, highlight cursor.
+                        g_display.setTextColor(GxEPD_BLACK);
+                        g_display.setCursor(xx, yy);
+            
+                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                        g_display.fillRect(xx + (state.pos+3)*W_FMB12,
+                                           yy - H_FMB12 + YM_FMB12,
+                                           W_FMB12,
+                                           H_FMB12 + YM_FMB12,
+                                           GxEPD_BLACK);
+        
+                        g_display.setTextColor(GxEPD_WHITE);
+                        g_display.setCursor(xoff + (state.pos+3)*W_FMB12, yy);
+                        g_display.printf("%c", word.c_str()[state.pos]);
+                    }
+                }
+
+                yy += H_FMB12 + YM_FMB12;
+            }
+
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.println("1,7-Up,Down #-Done");
+        }
+        while (g_display.nextPage());
+        
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("enter_share saw " + String(key));
+        switch (key) {
+        case '1':
+            state.select_prev();
+            break;
+        case '7':
+            state.select_next();
+            break;
+        case '4':
+            state.cursor_left();
+            break;
+        case '6':
+            state.cursor_right();
+            break;
+        case '2':
+            state.word_down();
+            break;
+        case '8':
+            state.word_up();
+            break;
+        case '#':	// done
+            // FIXME - store word list in g_restore_shares
+            g_uistate = RESTORE_SLIP39;
+            return;
+        default:
+            break;
+        }
+    }
+
 }
 
 // ----------------------------------------------------------------
 
+#if 0
 void recover_slip39() {
     display_words();
     Serial.println("reading keypad");
@@ -1044,6 +1268,7 @@ void compute_scroll() {
     else
         g_scroll = g_ndx - 3;
 }
+#endif
 
 void make_bip39_key() {
     if (g_rolls.length() * 2.5850 >= 128.0) {
