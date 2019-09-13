@@ -819,6 +819,9 @@ void restore_slip39() {
             if (selected < g_num_restore_shares + 1 + showrestore - 1)
                 selected += 1;
             break;
+        case '*':
+            g_uistate = SEEDLESS_MENU;
+            return;
         case '#':
             if (selected < g_num_restore_shares) {
                 // Edit existing share
@@ -1061,7 +1064,7 @@ void enter_share() {
                                            GxEPD_BLACK);
         
                         g_display.setTextColor(GxEPD_WHITE);
-                        g_display.setCursor(xoff + (state.pos+3)*W_FMB12, yy);
+                        g_display.setCursor(xx + (state.pos+3)*W_FMB12, yy);
                         g_display.printf("%c", word.c_str()[state.pos]);
                     }
                 }
@@ -1073,6 +1076,7 @@ void enter_share() {
             xx = xoff + 2;
             yy = Y_MAX - (H_FSB9) + 2;
             g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setTextColor(GxEPD_BLACK);
             g_display.setCursor(xx, yy);
             g_display.println("1,7-Up,Down #-Done");
         }
