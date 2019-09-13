@@ -642,7 +642,7 @@ void display_slip39() {
     while (true) {
         int xoff = 12;
         int yoff = 0;
-        int nrows = 6;
+        int nrows = 5;
     
         g_display.firstPage();
         do
@@ -658,7 +658,7 @@ void display_slip39() {
             g_display.printf("SLIP39 %d/%d", sharendx+1, g_slip39_nshares);
             yy += H_FSB9 + YM_FSB9;
             
-            yy += 4;
+            yy += 8;
         
             g_display.setFont(&FreeMonoBold12pt7b);
             for (int rr = 0; rr < nrows; ++rr) {
