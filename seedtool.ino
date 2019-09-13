@@ -922,7 +922,7 @@ void restore_bip39() {
             yy += H_FSB9 + YM_FSB9;
 
             g_display.setFont(&FreeMonoBold12pt7b);
-            yy += 4;
+            yy += 2;
 
             for (int rr = 0; rr < state.nrows; ++rr) {
                 int wndx = state.scroll + rr;
@@ -972,10 +972,13 @@ void restore_bip39() {
             }
 
             // bottom-relative position
-            xx = xoff + 2;
-            yy = Y_MAX - (H_FSB9) + 2;
+            xx = xoff;
+            yy = Y_MAX - 2*(H_FSB9) + 2;
             g_display.setFont(&FreeSansBold9pt7b);
             g_display.setTextColor(GxEPD_BLACK);
+            g_display.setCursor(xx, yy);
+            g_display.println("4,6-L,R 2,8-chr-,chr+");
+            yy += H_FSB9 + 2;
             g_display.setCursor(xx, yy);
             g_display.println("1,7-Up,Down #-Done");
         }
@@ -1191,7 +1194,7 @@ void enter_share() {
             yy += H_FSB9 + YM_FSB9;
 
             g_display.setFont(&FreeMonoBold12pt7b);
-            yy += 4;
+            yy += 2;
 
             for (int rr = 0; rr < state.nrows; ++rr) {
                 int wndx = state.scroll + rr;
@@ -1241,10 +1244,13 @@ void enter_share() {
             }
 
             // bottom-relative position
-            xx = xoff + 2;
-            yy = Y_MAX - (H_FSB9) + 2;
+            xx = xoff;
+            yy = Y_MAX - 2*(H_FSB9) + 2;
             g_display.setFont(&FreeSansBold9pt7b);
             g_display.setTextColor(GxEPD_BLACK);
+            g_display.setCursor(xx, yy);
+            g_display.println("4,6-L,R 2,8-chr-,chr+");
+            yy += H_FSB9 + 2;
             g_display.setCursor(xx, yy);
             g_display.println("1,7-Up,Down #-Done");
         }
