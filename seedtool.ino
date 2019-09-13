@@ -111,7 +111,7 @@ void loop() {
         generate_seed();
         break;
     case RESTORE_BIP39:
-        Serial.println("loop: RESTORE_BIP39 unimplemented");
+        restore_bip39();
         break;
     case RESTORE_SLIP39:
         restore_slip39();
@@ -165,6 +165,13 @@ void reset_state() {
     
     // Clear the restore shares
     free_restore_shares();
+}
+
+void log_master_secret() {
+    Serial.printf("master secret: ");
+    for (int ii = 0; ii < sizeof(g_master_secret); ++ii)
+        Serial.printf("%02x", (int) g_master_secret[ii]);
+    Serial.printf("\n");
 }
 
 int const Y_MAX = 200;
@@ -221,6 +228,9 @@ void seedless_menu() {
         switch (key) {
         case 'A':
             g_uistate = GENERATE_SEED;
+            return;
+        case 'B':
+            g_uistate = RESTORE_BIP39;
             return;
         case 'C':
             g_uistate = RESTORE_SLIP39;
@@ -295,6 +305,7 @@ void generate_seed() {
         case '#':
             g_submitted = true;
             seed_from_rolls();
+            log_master_secret();
             digitalWrite(26, HIGH);		// turn on green LED
             g_uistate = DISPLAY_BIP39;
             return;
@@ -724,6 +735,295 @@ void free_restore_shares() {
     g_num_restore_shares = 0;
 }
 
+struct WordListState {
+    int nwords;				// number of words in the mnemonic
+    int nrefwords;			// number of words in the total word list
+    
+    int* wordndx;			// ref index for each word in list
+    
+    int nrows;				// number of words visible
+    int selected;			// index of selected word
+    int pos;				// char index of cursor
+    int scroll;				// index of first visible word
+
+    WordListState(int i_nwords, int i_nrefwords)
+        : nwords(i_nwords)
+        , nrefwords(i_nrefwords)
+        , nrows(5)
+        , selected(0)
+        , pos(0)
+        , scroll(0)
+    {
+        wordndx = (int*) malloc(i_nwords * sizeof(int));
+    }
+
+    ~WordListState() {
+        free(wordndx);
+    }
+
+    virtual char const * refword(int ndx) = 0;
+    
+    void set_words(char* wordlist) {
+        if (!wordlist) {
+            for (int ii = 0; ii < nwords; ++ii)
+                wordndx[ii] = 0;
+        } else {
+            char* tmp = strdup(wordlist);	// so we can poke NULL w/ strtok
+            char* ptr = strtok(tmp, " ");
+            for (int ii = 0; ii < nwords; ++ii) {
+                for (int ndx = 0; ndx < nrefwords; ++ndx) {
+                    if (strcmp(ptr, refword(ndx)) == 0) {
+                        wordndx[ii] = ndx;
+                        break;
+                    }
+                }
+                ptr = strtok(NULL, " ");
+            }
+            free(tmp);
+        }
+    }
+    
+    char* word_list_string() {
+        String retval;
+        for (int ii = 0; ii < nwords; ++ii) {
+            retval += refword(wordndx[ii]);
+            if (ii != nwords-1)
+                retval += ' ';
+        }
+        return strdup(retval.c_str());
+    }
+
+    void compute_scroll() {
+        if (selected < 3)
+            scroll = 0;
+        else if (selected > nwords - 3)
+            scroll = nwords - nrows;
+        else
+            scroll = selected - 2;
+    }
+    
+    void select_prev() {
+        if (selected == 0)
+            selected = nwords - 1;
+        else
+            --selected;
+        pos = 0;
+    }
+
+    void select_next() {
+        if (selected == nwords - 1)
+            selected = 0;
+        else
+            ++selected;
+        pos = 0;
+    }
+    
+    void cursor_left() {
+        if (pos >= 1)
+            --pos;
+    }
+
+    void cursor_right() {
+        if (pos < strlen(refword(wordndx[selected])) - 1)
+            ++pos;
+    }
+    
+    void word_down() {
+        // Find the previous word that differs in the cursor position.
+        int wordndx0 = wordndx[selected];	// remember starting wordndx
+        String prefix0 = prefix(wordndx[selected]);
+        char curr0 = current(wordndx[selected]);
+        do {
+            if (wordndx[selected] == 0)
+                wordndx[selected] = nrefwords - 1;
+            else
+                --wordndx[selected];
+            // If we've returned to the original there are no choices.
+            if (wordndx[selected] == wordndx0)
+                break;
+        } while (prefix(wordndx[selected]) != prefix0 ||
+                 current(wordndx[selected]) == curr0);
+    }
+
+    void word_up() {
+        // Find the next word that differs in the cursor position.
+        int wordndx0 = wordndx[selected];	// remember starting wordndx
+        String prefix0 = prefix(wordndx[selected]);
+        char curr0 = current(wordndx[selected]);
+        do {
+            if (wordndx[selected] == (nrefwords - 1))
+                wordndx[selected] = 0;
+            else
+                ++wordndx[selected];
+            // If we've returned to the original there are no choices.
+            if (wordndx[selected] == wordndx0)
+                break;
+        } while (prefix(wordndx[selected]) != prefix0 ||
+                 current(wordndx[selected]) == curr0);
+    }
+
+    String prefix(int word) {
+        return String(refword(word)).substring(0, pos);
+    }
+
+    char current(int word) {
+        return refword(word)[pos];
+    }
+
+    bool unique_match() {
+        // Does the previous word also match?
+        if (wordndx[selected] > 0)
+            if (prefix(wordndx[selected] - 1) == prefix(wordndx[selected]))
+                return false;
+        // Does the next word also match?
+        if (wordndx[selected] < (nrefwords - 1))
+            if (prefix(wordndx[selected] + 1) == prefix(wordndx[selected]))
+                return false;
+        return true;
+    }
+};
+
+struct SLIP39WordlistState : WordListState {
+    SLIP39WordlistState(int i_nwords) : WordListState(i_nwords, 1024) {}
+    virtual char const * refword(int ndx) { return slip39_wordlist[ndx]; }
+};
+
+struct BIP39WordlistState : WordListState {
+    Bip39 & bip39;
+    BIP39WordlistState(Bip39 i_bip39, int i_nwords)
+        : WordListState(i_nwords, 2048)
+        , bip39(i_bip39)
+    {}
+    virtual char const * refword(int ndx) { return bip39.getMnemonic(ndx); }
+};
+
+void restore_bip39() {
+    BIP39WordlistState state(g_bip39, 12);
+    state.set_words(NULL);
+
+    while (true) {
+        int const xoff = 12;
+        int const yoff = 0;
+
+        state.compute_scroll();
+
+        g_display.firstPage();
+        do
+        {
+            g_display.setPartialWindow(0, 0, 200, 200);
+            // g_display.fillScreen(GxEPD_WHITE);
+            g_display.setTextColor(GxEPD_BLACK);
+
+            int xx = xoff;
+            int yy = yoff + (H_FSB9 + YM_FSB9);
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setCursor(xx, yy);
+            g_display.printf("BIP39 Mnemonic");
+            yy += H_FSB9 + YM_FSB9;
+
+            g_display.setFont(&FreeMonoBold12pt7b);
+            yy += 4;
+
+            for (int rr = 0; rr < state.nrows; ++rr) {
+                int wndx = state.scroll + rr;
+                String word = String(state.refword(state.wordndx[wndx]));
+                Serial.println(String(wndx) + " " + word);
+
+                if (wndx != state.selected) {
+                    // Regular entry, not being edited
+                    g_display.setTextColor(GxEPD_BLACK);
+                    g_display.setCursor(xx, yy);
+                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                } else {
+                    // Edited entry
+                    if (state.unique_match()) {
+                        // Unique, highlight entire word.
+                        g_display.fillRect(xx - 1,
+                                           yy - H_FMB12 + YM_FMB12,
+                                           W_FMB12 * (word.length() + 3) + 3,
+                                           H_FMB12 + YM_FMB12,
+                                           GxEPD_BLACK);
+        
+                        g_display.setTextColor(GxEPD_WHITE);
+                        g_display.setCursor(xx, yy);
+
+                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                    } else {
+                        // Not unique, highlight cursor.
+                        g_display.setTextColor(GxEPD_BLACK);
+                        g_display.setCursor(xx, yy);
+            
+                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+
+                        g_display.fillRect(xx + (state.pos+3)*W_FMB12,
+                                           yy - H_FMB12 + YM_FMB12,
+                                           W_FMB12,
+                                           H_FMB12 + YM_FMB12,
+                                           GxEPD_BLACK);
+        
+                        g_display.setTextColor(GxEPD_WHITE);
+                        g_display.setCursor(xx + (state.pos+3)*W_FMB12, yy);
+                        g_display.printf("%c", word.c_str()[state.pos]);
+                    }
+                }
+
+                yy += H_FMB12 + YM_FMB12;
+            }
+
+            // bottom-relative position
+            xx = xoff + 2;
+            yy = Y_MAX - (H_FSB9) + 2;
+            g_display.setFont(&FreeSansBold9pt7b);
+            g_display.setTextColor(GxEPD_BLACK);
+            g_display.setCursor(xx, yy);
+            g_display.println("1,7-Up,Down #-Done");
+        }
+        while (g_display.nextPage());
+        
+        char key;
+        do {
+            key = g_keypad.getKey();
+        } while (key == NO_KEY);
+        Serial.println("restore bip39 saw " + String(key));
+        switch (key) {
+        case '1':
+            state.select_prev();
+            break;
+        case '7':
+            state.select_next();
+            break;
+        case '4':
+            state.cursor_left();
+            break;
+        case '6':
+            state.cursor_right();
+            break;
+        case '2':
+            state.word_down();
+            break;
+        case '8':
+            state.word_up();
+            break;
+        case '#':	// done
+            for (int ii = 0; ii < state.nwords; ++ii)
+                g_bip39.setWord(ii, state.wordndx[ii]);
+            if (g_bip39.verifyChecksum()) {
+                memcpy(g_master_secret, g_bip39.getPayload(), 16);
+                log_master_secret();
+                digitalWrite(26, HIGH);		// turn on green LED
+                g_uistate = SEEDY_MENU;
+                return;
+            }
+            // FIXME - need diagnostic here
+            break;
+        default:
+            break;
+        }
+    }
+
+}
+
 void restore_slip39() {
     int scroll = 0;
     int selected = g_num_restore_shares;	// selects "add" initially
@@ -852,6 +1152,7 @@ void restore_slip39() {
                     return;
                 } else {
                     memcpy(g_master_secret, ms, msl);
+                    log_master_secret();
                     generate_bip39();
                     digitalWrite(26, HIGH);		// turn on green LED
                     g_uistate = DISPLAY_BIP39;
@@ -865,142 +1166,9 @@ void restore_slip39() {
     }
 }
 
-#define NREFWORDS 1024
-#define NWORDS 20
-struct WordListState {
-    int nrows;				// number of words visible
-    int wordndx[NWORDS];
-    int selected;			// index of selected word
-    int pos;				// char index of cursor
-    int scroll;				// index of first visible word
-
-    WordListState(char* wordlist)
-        : nrows(5)
-        , selected(0)
-        , pos(0)
-        , scroll(0)
-    {
-        if (!wordlist) {
-            for (int ii = 0; ii < NWORDS; ++ii)
-                wordndx[ii] = 0;
-        } else {
-            char* tmp = strdup(wordlist);	// so we can poke NULL w/ strtok
-            char* ptr = strtok(tmp, " ");
-            for (int ii = 0; ii < NWORDS; ++ii) {
-                for (int ndx = 0; ndx < NREFWORDS; ++ndx) {
-                    if (strcmp(ptr, slip39_wordlist[ndx]) == 0) {
-                        wordndx[ii] = ndx;
-                        break;
-                    }
-                }
-                ptr = strtok(NULL, " ");
-            }
-            free(tmp);
-        }
-    }
-
-    char* word_list_string() {
-        String retval;
-        for (int ii = 0; ii < NWORDS; ++ii) {
-            retval += slip39_wordlist[wordndx[ii]];
-            if (ii != NWORDS-1)
-                retval += ' ';
-        }
-        return strdup(retval.c_str());
-    }
-
-    void compute_scroll() {
-        if (selected < 3)
-            scroll = 0;
-        else if (selected > NWORDS - 3)
-            scroll = NWORDS - nrows;
-        else
-            scroll = selected - 2;
-    }
-    
-    void select_prev() {
-        if (selected == 0)
-            selected = NWORDS - 1;
-        else
-            --selected;
-        pos = 0;
-    }
-
-    void select_next() {
-        if (selected == NWORDS - 1)
-            selected = 0;
-        else
-            ++selected;
-        pos = 0;
-    }
-    
-    void cursor_left() {
-        if (pos >= 1)
-            --pos;
-    }
-
-    void cursor_right() {
-        if (pos < strlen(slip39_wordlist[wordndx[selected]]) - 1)
-            ++pos;
-    }
-    
-    void word_down() {
-        // Find the previous word that differs in the cursor position.
-        int wordndx0 = wordndx[selected];	// remember starting wordndx
-        String prefix0 = prefix(wordndx[selected]);
-        char curr0 = current(wordndx[selected]);
-        do {
-            if (wordndx[selected] == 0)
-                wordndx[selected] = 1023;
-            else
-                --wordndx[selected];
-            // If we've returned to the original there are no choices.
-            if (wordndx[selected] == wordndx0)
-                break;
-        } while (prefix(wordndx[selected]) != prefix0 ||
-                 current(wordndx[selected]) == curr0);
-    }
-
-    void word_up() {
-        // Find the next word that differs in the cursor position.
-        int wordndx0 = wordndx[selected];	// remember starting wordndx
-        String prefix0 = prefix(wordndx[selected]);
-        char curr0 = current(wordndx[selected]);
-        do {
-            if (wordndx[selected] == 1023)
-                wordndx[selected] = 0;
-            else
-                ++wordndx[selected];
-            // If we've returned to the original there are no choices.
-            if (wordndx[selected] == wordndx0)
-                break;
-        } while (prefix(wordndx[selected]) != prefix0 ||
-                 current(wordndx[selected]) == curr0);
-    }
-
-    String prefix(int word) {
-        return String(slip39_wordlist[word]).substring(0, pos);
-    }
-
-    char current(int word) {
-        return slip39_wordlist[word][pos];
-    }
-
-    bool unique_match() {
-        // Does the previous word also match?
-        if (wordndx[selected] > 0)
-            if (prefix(wordndx[selected] - 1) == prefix(wordndx[selected]))
-                return false;
-        // Does the next word also match?
-        if (wordndx[selected] < 1023)
-            if (prefix(wordndx[selected] + 1) == prefix(wordndx[selected]))
-                return false;
-        return true;
-    }
-};
-
 void enter_share() {
-    WordListState state(g_restore_shares[g_selected_share]);
+    SLIP39WordlistState state(20);
+    state.set_words(g_restore_shares[g_selected_share]);
 
     while (true) {
         int const xoff = 12;
@@ -1027,7 +1195,7 @@ void enter_share() {
 
             for (int rr = 0; rr < state.nrows; ++rr) {
                 int wndx = state.scroll + rr;
-                String word = String(slip39_wordlist[state.wordndx[wndx]]);
+                String word = String(state.refword(state.wordndx[wndx]));
                 Serial.println(String(wndx) + " " + word);
 
                 if (wndx != state.selected) {
@@ -1119,255 +1287,28 @@ void enter_share() {
 
 }
 
-// ----------------------------------------------------------------
-
-#if 0
-void recover_slip39() {
-    display_words();
-    Serial.println("reading keypad");
-    char key;
-    do {
-        key = g_keypad.getKey();
-    } while (key == NO_KEY);
-    Serial.println("keypad saw " + String(key));
-    switch (key) {
-    case NO_KEY:
-        break;
-    case '4':
-        move_left();
-        break;
-    case '6':
-        move_right();
-        break;
-    case '2':
-        jump_down();
-        break;
-    case '8':
-        jump_up();
-        break;
-    case '1':
-        prev_entry();
-        break;
-    case '7':
-        next_entry();
-        break;
-    case '5':
-        next_entry();
-        break;
-    default:
-        break;
-    }
-}
-
-String prefix(int word) {
-    return String(slip39_wordlist[word]).substring(0, g_pos);
-}
-
-char current(int word) {
-    return slip39_wordlist[word][g_pos];
-}
-
-bool unique_match() {
-    // Does the previous word also match?
-    if (g_wordndx[g_ndx] > 0)
-        if (prefix(g_wordndx[g_ndx] - 1) == prefix(g_wordndx[g_ndx]))
-            return false;
-    // Does the next word also match?
-    if (g_wordndx[g_ndx] < 1023)
-        if (prefix(g_wordndx[g_ndx] + 1) == prefix(g_wordndx[g_ndx]))
-            return false;
-    return true;
-}
-
-void move_left() {
-    if (g_pos >= 1)
-        --g_pos;
-}
-
-void move_right() {
-    if (g_pos < strlen(slip39_wordlist[g_wordndx[g_ndx]]) - 1)
-        ++g_pos;
-}
-
-void jump_down() {
-    // Find the previous word that differs in the cursor position.
-    int wordndx0 = g_wordndx[g_ndx];	// remember starting wordndx
-    String prefix0 = prefix(g_wordndx[g_ndx]);
-    char curr0 = current(g_wordndx[g_ndx]);
-    do {
-        if (g_wordndx[g_ndx] == 0)
-            g_wordndx[g_ndx] = 1023;
-        else
-            --g_wordndx[g_ndx];
-        // If we've returned to the original there are no choices.
-        if (g_wordndx[g_ndx] == wordndx0)
-            break;
-    } while (prefix(g_wordndx[g_ndx]) != prefix0 ||
-             current(g_wordndx[g_ndx]) == curr0);
-}
-
-void jump_up() {
-    // Find the next word that differs in the cursor position.
-    int wordndx0 = g_wordndx[g_ndx];	// remember starting wordndx
-    String prefix0 = prefix(g_wordndx[g_ndx]);
-    char curr0 = current(g_wordndx[g_ndx]);
-    do {
-        if (g_wordndx[g_ndx] == 1023)
-            g_wordndx[g_ndx] = 0;
-        else
-            ++g_wordndx[g_ndx];
-        // If we've returned to the original there are no choices.
-        if (g_wordndx[g_ndx] == wordndx0)
-            break;
-    } while (prefix(g_wordndx[g_ndx]) != prefix0 ||
-             current(g_wordndx[g_ndx]) == curr0);
-}
-
-void prev_entry() {
-    if (g_ndx == 0)
-        g_ndx = 19;
-    else
-        --g_ndx;
-    g_pos = 0;
-}
-
-void next_entry() {
-    if (g_ndx == 19)
-        g_ndx = 0;
-    else
-        ++g_ndx;
-    g_pos = 0;
-}
-
-void display_words() {
-    int xoff = 16;
-    // int yoff = 95;
-    int yoff = 25;
-    int width = 14;
-    int height = 20;
-    int yborder = 4;
-    int nrows = 6;
-
-    compute_scroll();
-    
-    g_display.firstPage();
-    do
-    {
-        g_display.setPartialWindow(0, 0, 200, 200);
-        // g_display.fillScreen(GxEPD_WHITE);
-        g_display.setFont(&FreeMonoBold12pt7b);
-
-        for (int rr = 0; rr < nrows; ++rr) {
-            int wndx = g_scroll + rr;
-            String word = String(slip39_wordlist[g_wordndx[wndx]]);
-            Serial.println(String(wndx) + " " + word);
-
-            int yy = yoff + (rr * (height + yborder));
-            
-            if (wndx != g_ndx) {
-                // Regular entry, not being edited
-                g_display.setTextColor(GxEPD_BLACK);
-                g_display.setCursor(xoff, yy);
-                g_display.printf("%2d %s\n", wndx+1, word.c_str());
-            } else {
-                // Edited entry
-                if (unique_match()) {
-                    // Unique, highlight entire word.
-                    g_display.fillRect(xoff,
-                                       yy - height + yborder,
-                                       width * (word.length() + 3),
-                                       height,
-                                       GxEPD_BLACK);
-        
-                    g_display.setTextColor(GxEPD_WHITE);
-                    g_display.setCursor(xoff, yoff);
-
-                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
-
-                } else {
-                    // Not unique, highlight cursor.
-                    g_display.setTextColor(GxEPD_BLACK);
-                    g_display.setCursor(xoff, yy);
-            
-                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
-
-                    g_display.fillRect(xoff + (g_pos+3)*width,
-                                       yy - height + yborder,
-                                       width, height,
-                                       GxEPD_BLACK);
-        
-                    g_display.setTextColor(GxEPD_WHITE);
-                    g_display.setCursor(xoff + (g_pos+3)*width, yy);
-                    g_display.printf("%c", word.c_str()[g_pos]);
-                }
-            }
-        }
-        
-    }
-    while (g_display.nextPage());
-}
-
-void compute_scroll() {
-    if (g_ndx < 3)
-        g_scroll = 0;
-    else if (g_ndx > 17)
-        g_scroll = 14;
-    else
-        g_scroll = g_ndx - 3;
-}
+extern "C" {
+void random_buffer(uint8_t *buf, size_t len) {
+    printf("random_buffer %d\n", len);
+    uint32_t r = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (i % 4 == 0) {
+#if defined(ESP32)
+            r = esp_random();
+#elif defined(SAMD51)
+            r = trngGetRandomNumber();
 #endif
-
-void make_bip39_key() {
-    if (g_rolls.length() * 2.5850 >= 128.0) {
-        digitalWrite(26, HIGH);
-    } else {
-        digitalWrite(26, LOW);
-    }
-    
-    display_status();
-        
-    if (!g_submitted) {
-        char key;
-        do {
-            key = g_keypad.getKey();
-        } while (key == NO_KEY);
-        Serial.println("keypad saw " + String(key));
-
-        switch (key) {
-        case NO_KEY:
-            break;
-        case 'A': case 'B': case 'C': case 'D':
-            break;
-        case '1': case '2': case '3':
-        case '4': case '5': case '6':
-            g_rolls += key;
-            break;
-        case '*':
-            g_rolls = "";
-            break;
-        case '#':
-            g_submitted = true;
-            generate_key();
-            break;
-        default:
-            break;
         }
-        Serial.println("g_rolls: " + g_rolls);
-    } else {
-        display_wordlist();
-
-        make_slip39_wordlist();
-        
-        // Wait for a keypress
-        char key;
-        do {
-            key = g_keypad.getKey();
-        } while (key == NO_KEY);
-        Serial.println("keypad saw " + String(key));
-
-        reset_state();
+        buf[i] = (r >> ((i % 4) * 8)) & 0xFF;
     }
 }
+
+void debug_print(char const * str) {
+    Serial.println(str);
+}
+}
+
+// ----------------------------------------------------------------
 
 void no_input_or_display() {
     g_rolls = "123456";
@@ -1398,56 +1339,6 @@ void generate_key() {
         uint16_t word = g_bip39.getWord(ndx);
         Serial.println(String(ndx) + " " + String(g_bip39.getMnemonic(word)));
     }
-}
-
-void display_status() {
-    g_display.firstPage();
-    do
-    {
-        g_display.setPartialWindow(0, 0, 200, 200);
-        // g_display.fillScreen(GxEPD_WHITE);
-        g_display.setTextColor(GxEPD_BLACK);
-        
-        g_display.setFont(&FreeSansBold12pt7b);
-        g_display.setCursor(2, 30);
-        g_display.println("BIP39 Generator");
-        g_display.setCursor(2, 60);
-        g_display.println("Enter Dice Rolls");
-        
-        g_display.setFont(&FreeMonoBold12pt7b);
-        g_display.setCursor(10, 95);
-        g_display.printf("Rolls: %d\n", g_rolls.length());
-        g_display.setCursor(10, 123);
-        g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
-        
-        g_display.setFont(&FreeSansBold9pt7b);
-        g_display.setCursor(0, 160);
-        g_display.println("   Press * to clear");
-        g_display.println("   Press # to submit");
-    }
-    while (g_display.nextPage());
-}
-
-void display_wordlist() {
-    g_display.firstPage();
-    do
-    {
-        g_display.setPartialWindow(0, 0, 200, 200);
-        // g_display.fillScreen(GxEPD_WHITE);
-        g_display.setFont(&FreeSansBold9pt7b);
-        for (int ndx = 0; ndx < 12; ndx += 2) {
-            int col = 15;
-            int row = ndx*10 + 40;
-            String word0 = g_bip39.getMnemonic(g_bip39.getWord(ndx));
-            String word1 = g_bip39.getMnemonic(g_bip39.getWord(ndx+1));
-            g_display.setCursor(col, row);
-            g_display.printf("%s  %s", word0.c_str(), word1.c_str());
-        }
-        g_display.setFont(&FreeSansBold9pt7b);
-        g_display.setCursor(20, 180);
-        g_display.println("Press * to clear");
-    }
-    while (g_display.nextPage());
 }
 
 void make_slip39_wordlist() {
@@ -1536,26 +1427,4 @@ void verify_slip39_multilevel() {
     } else {
         Serial.println("FAILED " + String(rc));
     }
-}
-
-
-extern "C" {
-void random_buffer(uint8_t *buf, size_t len) {
-    printf("random_buffer %d\n", len);
-    uint32_t r = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (i % 4 == 0) {
-#if defined(ESP32)
-            r = esp_random();
-#elif defined(SAMD51)
-            r = trngGetRandomNumber();
-#endif
-        }
-        buf[i] = (r >> ((i % 4) * 8)) & 0xFF;
-    }
-}
-
-void debug_print(char const * str) {
-    Serial.println(str);
-}
 }
