@@ -313,6 +313,10 @@ void seed_from_rolls() {
     }
     memcpy(g_master_secret, sha256.result(), sizeof(g_master_secret));
 
+    generate_bip39();
+}
+
+void generate_bip39() {
     // Generate the BIP39 mnemonic for this secret.
     g_bip39.setPayloadBytes(sizeof(g_master_secret));
     g_bip39.setPayload(sizeof(g_master_secret), (uint8_t *)g_master_secret);
@@ -727,19 +731,25 @@ void restore_slip39() {
     while (true) {
         int const xoff = 12;
         int const yoff = 0;
-        int const nrows = 5;
+        int const nrows = 4;
     
-        // Adjust the scroll to center the selection.
-        if (selected < 3)
-            scroll = 0;
-        else if (selected > g_num_restore_shares - 3)
-            scroll = g_num_restore_shares - 3;
-        else
-            scroll = selected - 3;
-        
         // Are we showing the restore action?
-        int showrestore = g_num_restore_shares > 0;
+        int showrestore = g_num_restore_shares > 0 ? 1 : 0;
 
+        // How many rows displayed?
+        int disprows = g_num_restore_shares + 1 + showrestore;
+        if (disprows > nrows)
+            disprows = nrows;
+            
+        // Adjust the scroll to center the selection.
+        if (selected < 2)
+            scroll = 0;
+        else if (selected > g_num_restore_shares)
+            scroll = g_num_restore_shares + 2 - disprows;
+        else
+            scroll = selected - 2;
+        Serial.printf("scroll = %d\n", scroll);
+        
         g_display.firstPage();
         do
         {
@@ -757,11 +767,6 @@ void restore_slip39() {
             xx = xoff + 20;
             yy += 16;
 
-            // Do we need to scroll?
-            int disprows = g_num_restore_shares + 1 + showrestore > nrows
-                ? nrows
-                : g_num_restore_shares + 1 + showrestore;
-            
             g_display.setFont(&FreeMonoBold12pt7b);
             for (int rr = 0; rr < disprows; ++rr) {
                 int sharendx = scroll + rr;
@@ -829,8 +834,26 @@ void restore_slip39() {
                 return;
             } else {
                 // Attempt restoration
-                g_uistate = SEEDLESS_MENU;	// FIXME - replace w real stuff.
-                return;
+                uint8_t ms[16];
+                int msl = sizeof(ms);
+                for (int ii = 0; ii < g_num_restore_shares; ++ii)
+                    Serial.printf("%d %s\n", ii+1, g_restore_shares[ii]);
+                int rv = combine_mnemonics(g_num_restore_shares,
+                                           g_restore_shares,
+                                           NULL, 0,
+                                           ms, &msl);
+                if (rv != 0) {
+                    // Something went wrong
+                    Serial.printf("combine_mnemonics failed: %d\n", rv);
+                    g_uistate = RESTORE_SLIP39;
+                    return;
+                } else {
+                    memcpy(g_master_secret, ms, msl);
+                    generate_bip39();
+                    digitalWrite(26, HIGH);		// turn on green LED
+                    g_uistate = DISPLAY_BIP39;
+                    return;
+                }
             }
             break;
         default:
@@ -839,17 +862,48 @@ void restore_slip39() {
     }
 }
 
+#define NREFWORDS 1024
 #define NWORDS 20
-struct EnterShareState {
+struct WordListState {
     int nrows;				// number of words visible
     int wordndx[NWORDS];
     int selected;			// index of selected word
     int pos;				// char index of cursor
     int scroll;				// index of first visible word
 
-    EnterShareState() : nrows(5), selected(0), pos(0), scroll(0) {
-        for (int ii = 0; ii < NWORDS; ++ii)
-            wordndx[ii] = 0;
+    WordListState(char* wordlist)
+        : nrows(5)
+        , selected(0)
+        , pos(0)
+        , scroll(0)
+    {
+        if (!wordlist) {
+            for (int ii = 0; ii < NWORDS; ++ii)
+                wordndx[ii] = 0;
+        } else {
+            char* tmp = strdup(wordlist);	// so we can poke NULL w/ strtok
+            char* ptr = strtok(tmp, " ");
+            for (int ii = 0; ii < NWORDS; ++ii) {
+                for (int ndx = 0; ndx < NREFWORDS; ++ndx) {
+                    if (strcmp(ptr, slip39_wordlist[ndx]) == 0) {
+                        wordndx[ii] = ndx;
+                        break;
+                    }
+                }
+                ptr = strtok(NULL, " ");
+            }
+            free(tmp);
+        }
+    }
+
+    char* word_list_string() {
+        String retval;
+        for (int ii = 0; ii < NWORDS; ++ii) {
+            retval += slip39_wordlist[wordndx[ii]];
+            if (ii != NWORDS-1)
+                retval += ' ';
+        }
+        return strdup(retval.c_str());
     }
 
     void compute_scroll() {
@@ -943,21 +997,8 @@ struct EnterShareState {
 };
 
 void enter_share() {
-#if 0    
-    if (g_restore_shares[g_selected_share])
-        free(g_restore_shares[g_selected_share]);
-    g_restore_shares[g_selected_share] =
-        strdup("eraser senior decision roster beard "
-               "treat identify grumpy salt index "
-               "fake aviation theater cubic bike "
-               "cause research dragon emphasis counter");
-    g_uistate = RESTORE_SLIP39;
-#endif
+    WordListState state(g_restore_shares[g_selected_share]);
 
-    EnterShareState state;
-
-    // FIXME - initialize wordndx from g_restore_shares
-    
     while (true) {
         int const xoff = 12;
         int const yoff = 0;
@@ -1062,7 +1103,9 @@ void enter_share() {
             state.word_up();
             break;
         case '#':	// done
-            // FIXME - store word list in g_restore_shares
+            if (g_restore_shares[g_selected_share])
+                free(g_restore_shares[g_selected_share]);
+            g_restore_shares[g_selected_share] = state.word_list_string();
             g_uistate = RESTORE_SLIP39;
             return;
         default:
