@@ -1,5 +1,49 @@
 // Copyright 2019 Bonsai Software, Inc.  All Rights Reserved.
 
+// Only define one of these
+#undef ESP32
+#define SAMD51	1
+
+/*
+ *  Epaper PIN MAP: [
+ *            ESP32		SAMD51
+ * ---------------------------
+ *      VCC - 3.3V		3.3V
+ *      GND - GND		GND
+ *      SDI - GPIO18	23/MOSI
+ *     SCLK - GPIO5		24/SCK
+ *       CS - GPIO21    A4
+ *      D/C - GPIO17	A3
+ *    Reset - GPIO16	A2
+ *     Busy - GPIO4		A1
+ *  ]
+ *
+ *  Keypad Matrix PIN MAP: [
+ *            ESP32		SAMD51
+ * ---------------------------
+ *     Pin8 - GPIO13	13
+ *        7 - GPIO12	12
+ *        6 - GPIO27	11
+ *        5 - GPIO33	10
+ *        4 - GPIO15	9
+ *        3 - GPIO32	6
+ *        2 - GPIO14	5
+ *     Pin1 - GPIO22	21/SCL
+ *  ]
+ *
+ *  BLUE LED PIN MAP: [
+ *    POS (long leg)  - GPIO25
+ *    NEG (short leg) - GND
+ *  ]
+ *
+ *  GREEN LED PIN MAP: [
+ *    POS (long leg)  - GPIO26
+ *    NEG (short leg) - GND
+ *  ]
+ */
+
+#include <stdarg.h>
+
 #include <bip39.h>
 #include <GxEPD2_BW.h>
 #include <Keypad.h>
@@ -15,8 +59,6 @@ extern "C" {
 #include <slip39_wordlist.h>
 }
 
-#define ESP32 1
-
 #if defined(SAMD51)
 extern "C" {
 #include "trngFunctions.h"
@@ -24,11 +66,19 @@ extern "C" {
 #endif
 
 // Display
+#if defined(ESP32)
 GxEPD2_BW<GxEPD2_154, GxEPD2_154::HEIGHT>
     g_display(GxEPD2_154(/*CS=*/   21,
                          /*DC=*/   17,
                          /*RST=*/  16,
                          /*BUSY=*/ 4));
+#elif defined(SAMD51)
+GxEPD2_BW<GxEPD2_154, GxEPD2_154::HEIGHT>
+    g_display(GxEPD2_154(/*CS=*/   PIN_A4,
+                         /*DC=*/   PIN_A3,
+                         /*RST=*/  PIN_A2,
+                         /*BUSY=*/ PIN_A1));
+#endif
 
 // Keypad
 const byte rows_ = 4;
@@ -39,8 +89,14 @@ char keys_[rows_][cols_] = {
                          {'7','8','9','C'},
                          {'*','0','#','D'}
 };
+#if defined(ESP32)
 byte rowPins_[rows_] = {13, 12, 27, 33};
 byte colPins_[cols_] = {15, 32, 14, 22};
+#elif defined(SAMD51)
+byte rowPins_[rows_] = {13, 12, 11, 10};
+byte colPins_[cols_] = {9, 6, 5, 21};
+#endif
+
 Keypad g_keypad = Keypad(makeKeymap(keys_), rowPins_, colPins_, rows_, cols_);
 
 enum UIState {
@@ -168,10 +224,10 @@ void reset_state() {
 }
 
 void log_master_secret() {
-    Serial.printf("master secret: ");
+    serial_printf("master secret: ");
     for (int ii = 0; ii < sizeof(g_master_secret); ++ii)
-        Serial.printf("%02x", (int) g_master_secret[ii]);
-    Serial.printf("\n");
+        serial_printf("%02x", (int) g_master_secret[ii]);
+    serial_printf("\n");
 }
 
 int const Y_MAX = 200;
@@ -272,10 +328,10 @@ void generate_seed() {
             yy += H_FMB12 + YM_FMB12;
             g_display.setFont(&FreeMonoBold12pt7b);
             g_display.setCursor(xx, yy);
-            g_display.printf("Rolls: %d\n", g_rolls.length());
+            display_printf("Rolls: %d\n", g_rolls.length());
             yy += H_FMB12 + YM_FMB12;
             g_display.setCursor(xx, yy);
-            g_display.printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
+            display_printf(" Bits: %0.1f\n", g_rolls.length() * 2.5850);
 
             // bottom-relative position
             xx = xoff + 10;
@@ -417,7 +473,7 @@ void display_bip39() {
                 int wndx = scroll + rr;
                 uint16_t word = g_bip39.getWord(wndx);
                 g_display.setCursor(xx, yy);
-                g_display.printf("%2d %s", wndx+1, g_bip39.getMnemonic(word));
+                display_printf("%2d %s", wndx+1, g_bip39.getMnemonic(word));
                 yy += H_FMB12 + YM_FMB12;
             }
             
@@ -497,7 +553,7 @@ void config_slip39() {
             yy += H_FMB12 + 2*YM_FMB12;
             g_display.setFont(&FreeMonoBold12pt7b);
             g_display.setCursor(xx, yy);
-            g_display.printf(" Thresh: %s", threshstr.c_str());
+            display_printf(" Thresh: %s", threshstr.c_str());
 
             if (!thresh_done) {
                 int xxx = xx + (9 * W_FMB12);
@@ -509,13 +565,13 @@ void config_slip39() {
                                    GxEPD_BLACK);
                 g_display.setTextColor(GxEPD_WHITE);
                 g_display.setCursor(xxx, yy);
-                g_display.printf("%s", threshstr.c_str());
+                display_printf("%s", threshstr.c_str());
                 g_display.setTextColor(GxEPD_BLACK);
             }
             
             yy += H_FMB12 + 2*YM_FMB12;
             g_display.setCursor(xx, yy);
-            g_display.printf("NShares: %s", nsharestr.c_str());
+            display_printf("NShares: %s", nsharestr.c_str());
 
             if (thresh_done) {
                 int xxx = xx + (9 * W_FMB12);
@@ -527,7 +583,7 @@ void config_slip39() {
                                    GxEPD_BLACK);
                 g_display.setTextColor(GxEPD_WHITE);
                 g_display.setCursor(xxx, yy);
-                g_display.printf("%s", nsharestr.c_str());
+                display_printf("%s", nsharestr.c_str());
                 g_display.setTextColor(GxEPD_BLACK);
             }
 
@@ -666,7 +722,7 @@ void display_slip39() {
             int yy = yoff + (H_FSB9 + YM_FSB9);
             g_display.setFont(&FreeSansBold9pt7b);
             g_display.setCursor(xx, yy);
-            g_display.printf("SLIP39 %d/%d", sharendx+1, g_slip39_nshares);
+            display_printf("SLIP39 %d/%d", sharendx+1, g_slip39_nshares);
             yy += H_FSB9 + YM_FSB9;
             
             yy += 8;
@@ -676,7 +732,7 @@ void display_slip39() {
                 int wndx = scroll + rr;
                 String word = slip39_select(g_slip39_shares[sharendx], wndx);
                 g_display.setCursor(xx, yy);
-                g_display.printf("%2d %s", wndx+1, word.c_str());
+                display_printf("%2d %s", wndx+1, word.c_str());
                 yy += H_FMB12 + YM_FMB12;
             }
             
@@ -918,7 +974,7 @@ void restore_bip39() {
             int yy = yoff + (H_FSB9 + YM_FSB9);
             g_display.setFont(&FreeSansBold9pt7b);
             g_display.setCursor(xx, yy);
-            g_display.printf("BIP39 Mnemonic");
+            display_printf("BIP39 Mnemonic");
             yy += H_FSB9 + YM_FSB9;
 
             g_display.setFont(&FreeMonoBold12pt7b);
@@ -933,7 +989,7 @@ void restore_bip39() {
                     // Regular entry, not being edited
                     g_display.setTextColor(GxEPD_BLACK);
                     g_display.setCursor(xx, yy);
-                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                    display_printf("%2d %s\n", wndx+1, word.c_str());
                 } else {
                     // Edited entry
                     if (state.unique_match()) {
@@ -947,14 +1003,14 @@ void restore_bip39() {
                         g_display.setTextColor(GxEPD_WHITE);
                         g_display.setCursor(xx, yy);
 
-                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                        display_printf("%2d %s\n", wndx+1, word.c_str());
 
                     } else {
                         // Not unique, highlight cursor.
                         g_display.setTextColor(GxEPD_BLACK);
                         g_display.setCursor(xx, yy);
             
-                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                        display_printf("%2d %s\n", wndx+1, word.c_str());
 
                         g_display.fillRect(xx + (state.pos+3)*W_FMB12,
                                            yy - H_FMB12 + YM_FMB12,
@@ -964,7 +1020,7 @@ void restore_bip39() {
         
                         g_display.setTextColor(GxEPD_WHITE);
                         g_display.setCursor(xx + (state.pos+3)*W_FMB12, yy);
-                        g_display.printf("%c", word.c_str()[state.pos]);
+                        display_printf("%c", word.c_str()[state.pos]);
                     }
                 }
 
@@ -1051,7 +1107,7 @@ void restore_slip39() {
             scroll = g_num_restore_shares + 2 - disprows;
         else
             scroll = selected - 2;
-        Serial.printf("scroll = %d\n", scroll);
+        serial_printf("scroll = %d\n", scroll);
         
         g_display.firstPage();
         do
@@ -1143,14 +1199,14 @@ void restore_slip39() {
                 uint8_t ms[16];
                 int msl = sizeof(ms);
                 for (int ii = 0; ii < g_num_restore_shares; ++ii)
-                    Serial.printf("%d %s\n", ii+1, g_restore_shares[ii]);
+                    serial_printf("%d %s\n", ii+1, g_restore_shares[ii]);
                 int rv = combine_mnemonics(g_num_restore_shares,
                                            g_restore_shares,
                                            NULL, 0,
                                            ms, &msl);
                 if (rv != 0) {
                     // Something went wrong
-                    Serial.printf("combine_mnemonics failed: %d\n", rv);
+                    serial_printf("combine_mnemonics failed: %d\n", rv);
                     g_uistate = RESTORE_SLIP39;
                     return;
                 } else {
@@ -1190,7 +1246,7 @@ void enter_share() {
             int yy = yoff + (H_FSB9 + YM_FSB9);
             g_display.setFont(&FreeSansBold9pt7b);
             g_display.setCursor(xx, yy);
-            g_display.printf("SLIP39 Share %d", g_selected_share+1);
+            display_printf("SLIP39 Share %d", g_selected_share+1);
             yy += H_FSB9 + YM_FSB9;
 
             g_display.setFont(&FreeMonoBold12pt7b);
@@ -1205,7 +1261,7 @@ void enter_share() {
                     // Regular entry, not being edited
                     g_display.setTextColor(GxEPD_BLACK);
                     g_display.setCursor(xx, yy);
-                    g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                    display_printf("%2d %s\n", wndx+1, word.c_str());
                 } else {
                     // Edited entry
                     if (state.unique_match()) {
@@ -1219,14 +1275,14 @@ void enter_share() {
                         g_display.setTextColor(GxEPD_WHITE);
                         g_display.setCursor(xx, yy);
 
-                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                        display_printf("%2d %s\n", wndx+1, word.c_str());
 
                     } else {
                         // Not unique, highlight cursor.
                         g_display.setTextColor(GxEPD_BLACK);
                         g_display.setCursor(xx, yy);
             
-                        g_display.printf("%2d %s\n", wndx+1, word.c_str());
+                        display_printf("%2d %s\n", wndx+1, word.c_str());
 
                         g_display.fillRect(xx + (state.pos+3)*W_FMB12,
                                            yy - H_FMB12 + YM_FMB12,
@@ -1236,7 +1292,7 @@ void enter_share() {
         
                         g_display.setTextColor(GxEPD_WHITE);
                         g_display.setCursor(xx + (state.pos+3)*W_FMB12, yy);
-                        g_display.printf("%c", word.c_str()[state.pos]);
+                        display_printf("%c", word.c_str()[state.pos]);
                     }
                 }
 
@@ -1312,6 +1368,26 @@ void random_buffer(uint8_t *buf, size_t len) {
 void debug_print(char const * str) {
     Serial.println(str);
 }
+}
+
+void display_printf(char *format, ...) {
+  char buff[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buff, sizeof(buff), format,args);
+  va_end(args);
+  buff[sizeof(buff)/sizeof(buff[0])-1]='\0';
+  g_display.print(buff);
+}
+
+void serial_printf(char *format, ...) {
+  char buff[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buff, sizeof(buff), format,args);
+  va_end(args);
+  buff[sizeof(buff)/sizeof(buff[0])-1]='\0';
+  Serial.print(buff);
 }
 
 // ----------------------------------------------------------------
