@@ -32,13 +32,17 @@
  *  ]
  *
  *  BLUE LED PIN MAP: [
- *    POS (long leg)  - GPIO25
- *    NEG (short leg) - GND
+ *                      ESP32		SAMD51
+ * ---------------------------------------
+ *    POS (long leg)  - GPIO25		1
+ *    NEG (short leg) - GND			GND
  *  ]
  *
  *  GREEN LED PIN MAP: [
- *    POS (long leg)  - GPIO26
- *    NEG (short leg) - GND
+ *                      ESP32		SAMD51
+ * ---------------------------------------
+ *    POS (long leg)  - GPIO26		4
+ *    NEG (short leg) - GND			GND
  *  ]
  */
 
@@ -63,6 +67,15 @@ extern "C" {
 extern "C" {
 #include "trngFunctions.h"
 }
+#endif
+
+// LEDS
+#if defined(ESP32)
+#define BLUE_LED	25
+#define GREEN_LED	26
+#elif defined(SAMD51)
+#define BLUE_LED	1
+#define GREEN_LED	4
 #endif
 
 // Display
@@ -135,11 +148,11 @@ int g_pos = 0;		// char position of cursor
 int g_scroll = 0;	// index of scrolled window
     
 void setup() {
-    pinMode(25, OUTPUT);	// Blue LED
-    digitalWrite(25, HIGH);
+    pinMode(BLUE_LED, OUTPUT);	// Blue LED
+    digitalWrite(BLUE_LED, HIGH);
     
-    pinMode(26, OUTPUT);	// Green LED
-    digitalWrite(26, LOW);
+    pinMode(GREEN_LED, OUTPUT);	// Green LED
+    digitalWrite(GREEN_LED, LOW);
     
     g_display.init(115200);
     g_display.setRotation(1);
@@ -204,7 +217,7 @@ void full_window_clear() {
 }
 
 void reset_state() {
-    digitalWrite(26, LOW);  // turn off the green LED
+    digitalWrite(GREEN_LED, LOW);  // turn off the green LED
             
     g_uistate = SEEDLESS_MENU;
     g_rolls = "";
@@ -362,7 +375,7 @@ void generate_seed() {
             g_submitted = true;
             seed_from_rolls();
             log_master_secret();
-            digitalWrite(26, HIGH);		// turn on green LED
+            digitalWrite(GREEN_LED, HIGH);		// turn on green LED
             g_uistate = DISPLAY_BIP39;
             return;
         default:
@@ -1070,7 +1083,7 @@ void restore_bip39() {
             if (g_bip39.verifyChecksum()) {
                 memcpy(g_master_secret, g_bip39.getPayload(), 16);
                 log_master_secret();
-                digitalWrite(26, HIGH);		// turn on green LED
+                digitalWrite(GREEN_LED, HIGH);		// turn on green LED
                 g_uistate = SEEDY_MENU;
                 return;
             }
@@ -1213,7 +1226,7 @@ void restore_slip39() {
                     memcpy(g_master_secret, ms, msl);
                     log_master_secret();
                     generate_bip39();
-                    digitalWrite(26, HIGH);		// turn on green LED
+                    digitalWrite(GREEN_LED, HIGH);		// turn on green LED
                     g_uistate = DISPLAY_BIP39;
                     return;
                 }
