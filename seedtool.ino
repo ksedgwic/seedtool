@@ -158,7 +158,11 @@ void setup() {
     g_display.setRotation(1);
 
     Serial.begin(115200);
+
+    // Only wait on the ESP32, the SAMD51 gets hung w/o serial here
+#if defined(ESP32)
     while (!Serial);	// wait for serial to come online
+#endif
 
     Serial.println("seedtool starting");
 
